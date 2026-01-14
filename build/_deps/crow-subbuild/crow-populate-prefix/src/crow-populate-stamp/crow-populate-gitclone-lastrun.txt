@@ -1,3 +1,0 @@
-repository='https://github.com/CrowCpp/Crow.git'
-module=''
-tag='origin'

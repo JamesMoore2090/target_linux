@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/targex_cli.dir/src/AsterixMapping.cpp.o CMakeFiles/targex_cli.dir/src/ConfigLoader.cpp.o CMakeFiles/targex_cli.dir/src/Logger.cpp.o CMakeFiles/targex_cli.dir/src/TargexCore.cpp.o CMakeFiles/targex_cli.dir/src/WebServer.cpp.o CMakeFiles/targex_cli.dir/src/main.cpp.o -o targex_cli  _deps/spdlog-build/libspdlog.a 

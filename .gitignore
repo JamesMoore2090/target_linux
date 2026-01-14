@@ -1,0 +1,8 @@
+build/
+output/
+logs/
+*.pcapng
+*.o
+*.a
+*.log
+.vscode/
