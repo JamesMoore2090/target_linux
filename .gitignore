@@ -6,3 +6,4 @@ logs/
 *.a
 *.log
 .vscode/
+public/download.csv

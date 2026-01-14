@@ -11,6 +11,7 @@
 class WebServer {
 public:
     WebServer(AppConfig& config, TargexCore& targexCore); // Reference so we can change settings
+    ~WebServer();
     void start();
     void stop();
 

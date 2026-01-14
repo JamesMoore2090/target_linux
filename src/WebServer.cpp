@@ -8,6 +8,10 @@ WebServer::WebServer(AppConfig& config, TargexCore& targexCore) : m_config(confi
     setupRoutes();
 }
 
+WebServer::~WebServer() {
+    stop(); // Safety net: Ensure we stop before destroying members
+}
+
 void WebServer::setupRoutes() {
     // 1. SERVE STATIC FILES
     CROW_ROUTE(app, "/")([](){
@@ -110,17 +114,61 @@ void WebServer::setupRoutes() {
         auto x = crow::json::load(req.body);
         if(!x) return crow::response(400);
 
+        // 1. Get the list of files to process
         std::vector<std::string> files;
-        for (const auto& item : x["files"]) files.push_back(item.s());
-        std::string format = x["format"].s();
+        for (const auto& item : x["files"]) {
+            files.push_back(item.s());
+        }
+        
+        std::string format = x["format"].s(); // "csv" or "json"
 
-        std::thread([files, format]() {
-            // ... (Your merge logic from previous step) ...
-            Logger::info("Merging {} files...", files.size());
-            // Remember to implement the system() calls here!
-        }).detach();
+        // 2. Launch Background Thread (So the GUI doesn't freeze)
+        std::thread([files, format, this]() {
+            Logger::info("Job Started: Merging {} files...", files.size());
+            
+            // A. Construct the 'mergecap' command
+            // mergecap -w public/temp_merged.pcapng output/file1.pcapng output/file2.pcapng ...
+            std::string mergeCmd = "mergecap -w public/temp_merged.pcapng";
+            
+            // IMPORTANT: Use the 'output/' directory we verified earlier
+            for(const auto& f : files) {
+                mergeCmd += " \"output/" + f + "\"";
+            }
+            
+            // Execute Merge
+            int res1 = system(mergeCmd.c_str());
+            if (res1 != 0) {
+                Logger::error("Mergecap failed. Is it installed? (sudo apt install wireshark-common)");
+                return;
+            }
 
-        return crow::response(202);
+            // B. Convert to Requested Format
+            std::string finalFile = "public/download." + format;
+            std::string convertCmd;
+
+            if (format == "json") {
+                // Tshark -> JSON (EK format)
+                convertCmd = "tshark -r public/temp_merged.pcapng -T ek > " + finalFile;
+            } else {
+                // Tshark -> CSV
+                // We extract Time, Source, Destination, Protocol, Length, and Info
+                convertCmd = "tshark -r public/temp_merged.pcapng -T fields -E separator=, -E header=y "
+                             "-e frame.time -e ip.src -e ip.dst -e _ws.col.Protocol -e frame.len -e _ws.col.Info "
+                             "> " + finalFile;
+            }
+
+            // Execute Conversion
+            int res2 = system(convertCmd.c_str());
+            
+            if (res2 == 0) {
+                Logger::info("Job Complete: File ready at {}", finalFile);
+            } else {
+                Logger::error("Conversion failed.");
+            }
+
+        }).detach(); // Detach allows it to run independently
+
+        return crow::response(202); // HTTP 202 Accepted
     });
 
     // 7. WEBSOCKET
@@ -163,5 +211,16 @@ void WebServer::broadcastPacket(const std::string& jsonString) {
             // If sending fails, assume disconnected and remove
             it = m_connections.erase(it);
         }
+    }
+}
+
+void WebServer::stop() {
+    // 1. Tell Crow to stop accepting new connections
+    // This breaks the app.run() loop inside the thread.
+    app.stop(); 
+    
+    // 2. Wait for the thread to actually finish (Join)
+    if (m_serverThread.joinable()) {
+        m_serverThread.join();
     }
 }

@@ -68,25 +68,25 @@ int main(int argc, char* argv[]) {
         // A headless server usually loops infinitely until told to stop
         while (keepRunning) {
             
-            if (!engine.isCapturing()) {
-                engine.startCapture(); 
-            }
-
-            // // B. Check Validity (using .is_null() from nlohmann library)
-            // if (!packetJson.is_null()) {
-                
-            //     // C. Example Logic: Accessing Data
-            //     // Tshark -T ek structure is usually: { "layers": { "ip": { ... }, "udp": { ... } } }
-            //     webServer.broadcastPacket(packetJson.dump());
-                
-            //     if (packetJson.contains("layers")) {
-            //         auto layers = packetJson["layers"];
-                    
-            //         // Log it just to prove it works
-            //         // Logger::info("Packet received!"); 
-            //         // std::cout << layers.dump() << std::endl; // Print raw JSON to console
-            //     }
+            // if (!engine.isCapturing()) {
+            //     engine.startCapture(); 
             // }
+            json packetJson = engine.pollData();
+            // // B. Check Validity (using .is_null() from nlohmann library)
+            if (!packetJson.is_null()) {
+                
+                // C. Example Logic: Accessing Data
+                // Tshark -T ek structure is usually: { "layers": { "ip": { ... }, "udp": { ... } } }
+                webServer.broadcastPacket(packetJson.dump());
+                
+                if (packetJson.contains("layers")) {
+                    auto layers = packetJson["layers"];
+                    
+                    // Log it just to prove it works
+                    // Logger::info("Packet received!"); 
+                    // std::cout << layers.dump() << std::endl; // Print raw JSON to console
+                }
+            }
         }
 
     } catch (const std::exception& e) {
@@ -95,6 +95,8 @@ int main(int argc, char* argv[]) {
     }
     // 5. Cleanup
     // When loop breaks, 'engine' destructor is called automatically here.
+    webServer.stop();
+    engine.stopCapture();
     Logger::info("TARGEX Server stopped gracefully.");
     return 0;
 }
