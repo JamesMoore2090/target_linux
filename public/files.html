@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TARGEX File Manager</title>
+    <style>
+        body { font-family: monospace; background: #1e1e1e; color: #ccc; padding: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #444; }
+        th { color: #00ff00; }
+        .locked { color: #777; font-style: italic; }
+        button { padding: 10px 20px; cursor: pointer; background: #333; color: white; border: 1px solid #555; }
+        button:hover { background: #444; }
+        .actions { margin-bottom: 20px; display: flex; gap: 10px; }
+    </style>
+</head>
+<body>
+    <h1>DATA ARCHIVE</h1>
+    <div class="actions">
+        <button onclick="location.href='/'">← Back to Live View</button>
+        <div style="flex-grow: 1;"></div>
+        <select id="export-format">
+            <option value="csv">CSV (Excel)</option>
+            <option value="json">JSON (Full Data)</option>
+        </select>
+        <button onclick="processFiles()" style="background: #004400;">MERGE & DOWNLOAD</button>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Select</th>
+                <th>Filename</th>
+                <th>Size (Bytes)</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody id="file-list"></tbody>
+    </table>
+
+    <script>
+        async function loadFiles() {
+            const res = await fetch('/api/files');
+            const data = await res.json();
+            const tbody = document.getElementById('file-list');
+            tbody.innerHTML = '';
+
+            data.files.forEach(file => {
+                const tr = document.createElement('tr');
+                
+                // Checkbox Logic
+                let checkbox = `<input type="checkbox" value="${file.name}" class="file-chk">`;
+                let status = "Ready";
+                
+                if (file.locked) {
+                    checkbox = `<input type="checkbox" disabled>`;
+                    status = "<span style='color:orange'>Actively Recording...</span>";
+                    tr.className = "locked";
+                }
+
+                tr.innerHTML = `
+                    <td>${checkbox}</td>
+                    <td>${file.name}</td>
+                    <td>${file.size.toLocaleString()}</td>
+                    <td>${status}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function processFiles() {
+            const checks = document.querySelectorAll('.file-chk:checked');
+            if (checks.length === 0) return alert("Select at least one file!");
+
+            const files = Array.from(checks).map(c => c.value);
+            const format = document.getElementById('export-format').value;
+
+            const btn = document.querySelector('button[style*="004400"]');
+            btn.textContent = "Processing... (Check Logs)";
+            btn.disabled = true;
+
+            // Trigger Background Job
+            await fetch('/api/merge', {
+                method: 'POST',
+                body: JSON.stringify({ files: files, format: format })
+            });
+
+            // For this simple demo, we wait 5 seconds then guess it's done.
+            // In a real app, you'd poll a status endpoint.
+            setTimeout(() => {
+                alert("Processing Complete. Download starting.");
+                window.location.href = `/download.${format}`; // Serves public/download.xxx
+                btn.textContent = "MERGE & DOWNLOAD";
+                btn.disabled = false;
+            }, 5000); 
+        }
+
+        loadFiles();
+    </script>
+</body>
+</html>

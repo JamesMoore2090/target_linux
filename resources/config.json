@@ -1,0 +1,32 @@
+{
+  "system": {
+    "app_name": "TARGEX-CLI",
+    "version": "1.0.0",
+    "tick_rate_ms": 10,
+    "pid_file": "/var/run/targex.pid",
+    "site": "test",
+    "isMSCTActive": false
+  },
+  "logging": {
+    "level": "debug",
+    "log_to_console": true,
+    "log_file_path": "logs/targex.log",
+    "max_file_size_mb": 10
+  },
+  "network_input": {
+    "interface": "ens34",
+    "port": 8600,
+    "protocol": "udp",
+    "multicast_group": "227.0.0.2",
+    "buffer_size": 4096
+  },
+  "processing": {
+    "active_categories": [34, 48],
+    "filter_test_targets": true,
+    "staleness_threshold_sec": 30
+  },
+  "output": {
+    "enabled": true,
+    "destination": "output/"
+  }
+}

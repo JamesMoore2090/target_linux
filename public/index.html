@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TARGEX Live View</title>
+    <style>
+        /* CSS: Dark Mode "Matrix" Style */
+        body { font-family: 'Courier New', monospace; background: #1e1e1e; color: #00ff00; padding: 20px; margin: 0; }
+        
+        /* Header Container */
+        .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+            border-bottom: 2px solid #333;
+            padding-bottom: 15px;
+            margin-bottom: 15px;
+        }
+
+        h1 { margin: 0; font-size: 24px; color: #fff; }
+
+        /* Controls */
+        .controls { display: flex; gap: 15px; align-items: center; }
+        
+        button { 
+            cursor: pointer; 
+            padding: 8px 16px; 
+            font-weight: bold; 
+            border: 1px solid #555;
+            background: #333; 
+            color: #fff;
+            transition: all 0.2s;
+        }
+        button:hover { background: #444; }
+
+        /* Status Light */
+        #status-indicator {
+            width: 15px; 
+            height: 15px; 
+            border-radius: 50%; 
+            background: #444; /* Default off */
+            border: 2px solid #222;
+        }
+
+        /* Packet Log Window */
+        #packet-log { 
+            height: 80vh; 
+            overflow-y: scroll; 
+            border: 1px solid #444; 
+            padding: 10px; 
+            background: #000; 
+            font-size: 14px;
+        }
+        
+        /* Individual Log Lines */
+        .packet { border-bottom: 1px solid #333; padding: 2px 0; display: flex; }
+        .ts { color: #888; margin-right: 10px; width: 140px; flex-shrink: 0; }
+        .data { color: #0f0; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>TARGEX TACTICAL INTERFACE</h1>
+        
+        <div class="controls">
+            <div id="status-indicator" title="Capture Status"></div>
+            
+            <button id="toggle-btn" onclick="toggleCapture()">Initializing...</button>
+            
+            <button onclick="location.href='/files.html'">File Manager</button>
+            <button onclick="location.href='/settings.html'">Settings</button>
+        </div>
+    </div>
+
+    <div id="packet-log">
+        <div class="packet"><span class="ts">[SYSTEM]</span><span class="data">Waiting for data stream...</span></div>
+    </div>
+
+    <script>
+        const logDiv = document.getElementById('packet-log');
+
+        // --- WEBSOCKET CONNECTION ---
+        const socket = new WebSocket("ws://" + window.location.host + "/ws");
+
+        socket.onopen = () => {
+            console.log("Connected to TARGEX Core");
+            addLog("System", "Connected to Real-time Stream.");
+        };
+
+        socket.onmessage = (event) => {
+            // Parse the JSON from C++
+            try {
+                const packet = JSON.parse(event.data);
+                
+                let summary = "RAW: " + JSON.stringify(packet);
+                
+                // Pretty print standard IP packets
+                if (packet.layers && packet.layers.ip) {
+                    const src = packet.layers.ip.ip_ip_src;
+                    const dst = packet.layers.ip.ip_ip_dst;
+                    const len = packet.layers.udp ? packet.layers.udp.udp_udp_length : "TCP";
+                    summary = `IP: ${src} -> ${dst} | Len: ${len}`;
+                }
+                addLog("RX", summary);
+            } catch(e) {
+                console.error("Parse error", e);
+            }
+        };
+
+        socket.onclose = (event) => {
+            addLog("System", "Connection Lost. Reconnecting...");
+        };
+
+        function addLog(source, text) {
+            const div = document.createElement('div');
+            div.className = 'packet';
+            // Simple timestamp
+            const time = new Date().toLocaleTimeString();
+            div.innerHTML = `<span class="ts">[${time}] ${source}</span><span class="data">${text}</span>`;
+            
+            logDiv.appendChild(div);
+            
+            // Auto-scroll to bottom
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // --- CAPTURE CONTROL LOGIC ---
+        async function updateStatus() {
+            try {
+                const res = await fetch('/api/capture/status');
+                const data = await res.json();
+                console.log("Server Status Report:", data);
+                const btn = document.getElementById('toggle-btn');
+                const ind = document.getElementById('status-indicator');
+
+                if (data.running) {
+                    // STATE: RUNNING
+                    btn.textContent = "STOP CAPTURE";
+                    btn.style.background = "darkred";
+                    
+                    ind.style.background = "#00ff00"; // Green Light
+                    ind.style.boxShadow = "0 0 10px #00ff00"; // Glow effect
+                } else {
+                    // STATE: STOPPED
+                    btn.textContent = "START CAPTURE";
+                    btn.style.background = "darkgreen";
+                    
+                    ind.style.background = "red"; // Red Light
+                    ind.style.boxShadow = "none";
+                }
+            } catch (e) {
+                console.error("Status fetch failed", e);
+            }
+        }
+
+        async function toggleCapture() {
+            const btn = document.getElementById('toggle-btn');
+            // Determine intent based on current button text
+            const isCurrentlyRunning = btn.textContent.includes("STOP");
+            const intentToStart = !isCurrentlyRunning;
+            
+            // Send command
+            await fetch('/api/capture/control', {
+                method: 'POST',
+                body: JSON.stringify({ action: intentToStart })
+            });
+            
+            // Wait 500ms for backend to process, then update UI
+            setTimeout(updateStatus, 500);
+        }
+
+        // Run status check immediately, then every 2 seconds
+        updateStatus();
+        setInterval(updateStatus, 2000);
+
+    </script>
+</body>
+</html>
