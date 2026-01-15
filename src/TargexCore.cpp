@@ -180,7 +180,6 @@ json TargexCore::pollData() {
             if (line.length() < 5) return nullptr; // Skip empty lines
 
             json j = json::parse(line);
-            
             // "ek" format often outputs an "index" line first, we ignore that.
             if (j.contains("index")) return nullptr;
 

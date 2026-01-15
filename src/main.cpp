@@ -74,7 +74,8 @@ int main(int argc, char* argv[]) {
             json packetJson = engine.pollData();
             // // B. Check Validity (using .is_null() from nlohmann library)
             if (!packetJson.is_null()) {
-                
+                std::string debugStr = packetJson.dump();
+                std::cout << "[DEBUG] JSON: " << debugStr << "..." << std::endl;
                 // C. Example Logic: Accessing Data
                 // Tshark -T ek structure is usually: { "layers": { "ip": { ... }, "udp": { ... } } }
                 webServer.broadcastPacket(packetJson.dump());

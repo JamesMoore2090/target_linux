@@ -13,36 +13,63 @@ WebServer::~WebServer() {
 }
 
 void WebServer::setupRoutes() {
-    // 1. SERVE STATIC FILES
+    // ---------------------------------------------------------
+    // 1. WEBSOCKET (MOVE THIS TO THE TOP!)
+    // ---------------------------------------------------------
+    CROW_WEBSOCKET_ROUTE(app, "/ws")
+        .onopen([&](crow::websocket::connection& conn) {
+            std::lock_guard<std::mutex> _(m_connectionMutex);
+            m_connections.push_back(&conn);
+            Logger::info("GUI Connected! Total Clients: {}", m_connections.size());
+        })
+        .onclose([&](crow::websocket::connection& conn, const std::string& reason, uint16_t code) {
+            std::lock_guard<std::mutex> _(m_connectionMutex);
+            m_connections.erase(
+                std::remove(m_connections.begin(), m_connections.end(), &conn), 
+                m_connections.end()
+            );
+            Logger::info("GUI Disconnected.");
+        });
+
+    // ---------------------------------------------------------
+    // 2. STATIC FILES
+    // ---------------------------------------------------------
     CROW_ROUTE(app, "/")([](){
         crow::response res;
         res.set_static_file_info("public/index.html");
         return res;
     });
 
+    // This is the "greedy" route that was causing the problem
     CROW_ROUTE(app, "/<string>")
     ([](std::string path){
+        // Safety check: Don't let it serve "ws" if the top route missed
+        if (path == "ws") return crow::response(404);
+        
         crow::response res;
         res.set_static_file_info("public/" + path);
         return res;
     });
 
-    // 2. API: GET SETTINGS
+    // ---------------------------------------------------------
+    // 3. API ENDPOINTS
+    // ---------------------------------------------------------
     CROW_ROUTE(app, "/api/settings")([this](){
+        // ... (Keep existing code) ...
         crow::json::wvalue x;
         x["site_name"] = m_config.site_name;
         x["rx_port"] = m_config.rx_port;
         return x;
     });
 
-    // 3. API: STATUS (For Start/Stop)
+    // API: STATUS (For Start/Stop)
     CROW_ROUTE(app, "/api/capture/status")([&](){
         crow::json::wvalue x;
         x["running"] = m_engine.isCapturing();
         return x;
     });
 
-    // 4. API: CONTROL (Start/Stop)
+    // API: CONTROL (Start/Stop)
     CROW_ROUTE(app, "/api/capture/control").methods("POST"_method)
     ([&](const crow::request& req){
         auto x = crow::json::load(req.body);
@@ -64,7 +91,7 @@ void WebServer::setupRoutes() {
         return crow::response(200);
     });
 
-    // 5. API: FILE LIST (THE ONLY ONE YOU NEED)
+    // API: FILE LIST (THE ONLY ONE YOU NEED)
     CROW_ROUTE(app, "/api/files")([&](){
         std::vector<crow::json::wvalue> fileList;
         std::string path = m_config.destination;
@@ -108,7 +135,7 @@ void WebServer::setupRoutes() {
         return result;
     });
 
-    // 6. API: MERGE
+    //  API: MERGE
     CROW_ROUTE(app, "/api/merge").methods("POST"_method)
     ([this](const crow::request& req){
         auto x = crow::json::load(req.body);
@@ -170,24 +197,8 @@ void WebServer::setupRoutes() {
 
         return crow::response(202); // HTTP 202 Accepted
     });
-
-    // 7. WEBSOCKET
-    CROW_WEBSOCKET_ROUTE(app, "/ws")
-        .onopen([&](crow::websocket::connection& conn) {
-            std::lock_guard<std::mutex> guard(m_connectionMutex);
-            m_connections.push_back(&conn);
-            Logger::debug("WS: New Client Connected");
-        })
-        .onclose([&](crow::websocket::connection& conn, const std::string& reason, uint16_t code) {
-            std::lock_guard<std::mutex> guard(m_connectionMutex);
-            // Safe removal
-            m_connections.erase(
-                std::remove(m_connections.begin(), m_connections.end(), &conn), 
-                m_connections.end()
-            );
-            Logger::debug("WS: Client Disconnected");
-        });
 }
+
 
 void WebServer::start() {
     // Run the server in a separate thread so it doesn't block Tshark
@@ -199,18 +210,26 @@ void WebServer::start() {
 
 void WebServer::broadcastPacket(const std::string& jsonString) {
     // LOCK THE THREAD
-    std::lock_guard<std::mutex> guard(m_connectionMutex); 
+    std::lock_guard<std::mutex> _(m_connectionMutex);
 
-    // Remove dead connections safely before sending
-    auto it = m_connections.begin();
-    while (it != m_connections.end()) {
-        try {
-            (*it)->send_text(jsonString);
-            ++it;
-        } catch (...) {
-            // If sending fails, assume disconnected and remove
-            it = m_connections.erase(it);
+    // 1. Log the "Guest List" size
+    if (m_connections.empty()) {
+        // Use static so we don't spam the log 100 times a second
+        static int noClientCounter = 0;
+        if (noClientCounter++ % 200 == 0) { // Log every ~2 seconds
+            Logger::warn("Broadcast failed: Connection list is EMPTY. (Browser is connected but not registered?)");
         }
+    } else {
+        // Log that we are sending
+        static int successCounter = 0;
+        if (successCounter++ % 200 == 0) {
+            Logger::info("Broadcasting packet to {} client(s). Data len: {}", m_connections.size(), jsonString.length());
+        }
+    }
+
+    // 2. Send the data
+    for (auto* conn : m_connections) {
+        conn->send_text(jsonString);
     }
 }
 
