@@ -105,38 +105,40 @@ bool TargexCore::initialize() {
 
 void TargexCore::startCapture(){
     if (m_isCapturing) return;
-    // 2. Construct Filename
-    // Format: captures/14-01-2026_15-10_Radars_VA_01.pcapng
-    std::string filename = m_config.destination + m_config.site_name + ".pcapng";
-    
-    Logger::info("Recording will be saved to: {}", filename);
-    
-    // 1. Construct the Command
-    // -l : Line buffered (critical for real-time!)
-    // -n : No name resolution (faster)
-    // -T ek : Newline Delimited JSON output
-    std::string cmd = "tshark -l -n -T ek -i ens34";
-    
-    // Append the write flags
-    cmd += " -w \"" + filename + "\" -P";
 
-    // -b duration:3600  -> Create a new file every 3600 seconds (1 Hour)
-    cmd += " -b duration:3600";
-    // cmd += " -b duration:60";
-    // Append the port filter
-    cmd += " -f \"udp port " + std::to_string(m_config.rx_port) + "\"";
+   /// 1. GENERATE TIMESTAMP
+    auto now = std::time(nullptr);
+    auto tm = *std::localtime(&now);
+    
+    std::ostringstream oss;
+    oss << "output/" << m_config.site_name << "_" 
+        << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".pcapng";
+        
+    // Update the class member so we know what file we are writing to
+    m_currentFile = oss.str();
 
-    Logger::info("Launching Tshark: {}", cmd);
+    // 2. STRICT FILTER (The fix)
+    // We filter at the very beginning (dumpcap) so we don't even record the noise.
+    // "udp port 8600" means: Only capture UDP traffic on port 8600.
+    std::string filter = "udp port " + std::to_string(m_config.rx_port);
 
-    // 2. Open the Pipe
-    // "r" means we want to READ from this command
+    // 3. PIPELINE
+    std::string cmd = "dumpcap -q -i ens34 -f \"" + filter + "\" -w - "; 
+    cmd += "| tee \"" + m_currentFile + "\" ";
+    cmd += "| tshark -l -n -i - -T ek -d udp.port==" + std::to_string(m_config.rx_port) + ",asterix";
+
+    Logger::info("Starting Capture Pipeline with filter: {}", filter);
+
+    // Logger::info("CMD: {}", cmd); // Uncomment to debug command
+
+    // 3. Open Pipe
+    // We are reading the output of the FINAL tshark command in the chain
     m_tsharkPipe = popen(cmd.c_str(), "r");
-
+    
     if (m_tsharkPipe) {
         m_isCapturing = true;
     }
 
-    Logger::info("Tshark started successfully. Listening...");
 }
 
 void TargexCore::stopCapture() {
@@ -166,33 +168,25 @@ void TargexCore::stopCapture() {
 }
 
 json TargexCore::pollData() {
-    // 1. Check if pipe is valid
-    if (!m_tsharkPipe) return nullptr;
+    if (!m_isCapturing || !m_tsharkPipe) return nullptr;
 
-    // 2. Read One Line from Tshark
-    // fgets reads until it hits a Newline (\n)
-    if (fgets(m_lineBuffer, sizeof(m_lineBuffer), m_tsharkPipe) != nullptr) {
-        
+    char buffer[65536]; // Keep the large buffer
+
+    if (fgets(buffer, sizeof(buffer), m_tsharkPipe) != nullptr) {
         try {
-            // 3. Parse that line into JSON
-            // We verify it's not empty/garbage data
-            std::string line(m_lineBuffer);
-            if (line.length() < 5) return nullptr; // Skip empty lines
+            json rawPacket = json::parse(buffer);
 
-            json j = json::parse(line);
-            // "ek" format often outputs an "index" line first, we ignore that.
-            if (j.contains("index")) return nullptr;
+            // The pipeline outputs strict EK JSON, so we just look for layers
+            if (rawPacket.contains("layers")) {
+                return rawPacket;
+            }
+            // Ignore metadata lines
+            return nullptr;
 
-            return j;
-
-        } catch (const json::parse_error& e) {
-            // Tshark might output status text "Capturing on 'ens34'..."
-            // We ignore it, it's not JSON.
-            // Logger::debug("Non-JSON line ignored: {}", m_lineBuffer);
+        } catch (...) {
             return nullptr;
         }
     }
-    
     return nullptr;
 }
 

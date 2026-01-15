@@ -14,6 +14,7 @@
     "Height": { "source": "asterix.034_120_HGT", "target": "Cat34_Hgt" },
     "Latitude": { "source": "asterix.034_120_LAT", "target": "Cat34_Lat" },
     "Longitude": { "source": "asterix.034_120_LON", "target": "Cat34_Lon" }
+    
   },
   "CAT_48_MAP": {
     "SAC": { "source": "asterix.048_010_SAC", "target": "Cat48_SAC" },
@@ -42,3 +43,4 @@
     "SIGH": { "source": "asterix.048_210_SIGH", "target": "Cat48_SigH" }
   }
 }
+

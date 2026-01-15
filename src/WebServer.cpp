@@ -141,61 +141,78 @@ void WebServer::setupRoutes() {
         auto x = crow::json::load(req.body);
         if(!x) return crow::response(400);
 
-        // 1. Get the list of files to process
         std::vector<std::string> files;
-        for (const auto& item : x["files"]) {
-            files.push_back(item.s());
-        }
+        for (const auto& item : x["files"]) files.push_back(item.s());
         
-        std::string format = x["format"].s(); // "csv" or "json"
-
-        // 2. Launch Background Thread (So the GUI doesn't freeze)
+        std::string format = x["format"].s();
+        
+        // Background Job
         std::thread([files, format, this]() {
             Logger::info("Job Started: Merging {} files...", files.size());
             
-            // A. Construct the 'mergecap' command
-            // mergecap -w public/temp_merged.pcapng output/file1.pcapng output/file2.pcapng ...
+            // 1. MERGE FILES
             std::string mergeCmd = "mergecap -w public/temp_merged.pcapng";
+            for(const auto& f : files) mergeCmd += " \"output/" + f + "\"";
             
-            // IMPORTANT: Use the 'output/' directory we verified earlier
-            for(const auto& f : files) {
-                mergeCmd += " \"output/" + f + "\"";
-            }
-            
-            // Execute Merge
-            int res1 = system(mergeCmd.c_str());
-            if (res1 != 0) {
-                Logger::error("Mergecap failed. Is it installed? (sudo apt install wireshark-common)");
+            if (system(mergeCmd.c_str()) != 0) {
+                Logger::error("Merge failed.");
                 return;
             }
 
-            // B. Convert to Requested Format
+            // 2. CONVERT
             std::string finalFile = "public/download." + format;
             std::string convertCmd;
 
             if (format == "json") {
-                // Tshark -> JSON (EK format)
+                // Tshark -> JSON
                 convertCmd = "tshark -r public/temp_merged.pcapng -T ek > " + finalFile;
             } else {
-                // Tshark -> CSV
-                // We extract Time, Source, Destination, Protocol, Length, and Info
-                convertCmd = "tshark -r public/temp_merged.pcapng -T fields -E separator=, -E header=y "
-                             "-e frame.time -e ip.src -e ip.dst -e _ws.col.Protocol -e frame.len -e _ws.col.Info "
-                             "> " + finalFile;
+                // Tshark -> CSV (Custom Headers & Fields)
+                
+                // A. Define the Header Line (User Friendly Names)
+                // Note: We use 'echo' to write the header first, because tshark -E header=y uses raw field names.
+                std::string header = "echo \"SRC_IP,DST_IP,DST_PORT,"
+                                     // CAT 34 Headers
+                                     "Cat34_SAC,Cat34_SIC,Cat34_MsgType,Cat34_TimeOfDay,"
+                                     "Cat34_PSR_ANT,Cat34_PSR_CHAB,Cat34_PSR_OVL,Cat34_PSR_MSC,"
+                                     "Cat34_PSR_POL,Cat34_PSR_REDRAD,Cat34_PSR_STC,"
+                                     "Cat34_Hgt,Cat34_Lat,Cat34_Lon,"
+                                     // CAT 48 Headers
+                                     "Cat48_SAC,Cat48_SIC,Cat48_TimeOfDay,Cat48_ReportType,Cat48_SIM,Cat48_RDP,"
+                                     "Cat48_SPI,Cat48_RAB,Cat48_RHO,Cat48_THETA,Cat48_TrackNumber,Cat48_X,Cat48_Y,"
+                                     "Cat48_GroundSpeed,Cat48_Heading,Cat48_Confirmed,Cat48_Radar,Cat48_DOU,"
+                                     "Cat48_MAH,Cat48_CDM,Cat48_SigX,Cat48_SigY,Cat48_SigV,Cat48_SigH\" > " + finalFile;
+                
+                system(header.c_str());
+
+                // B. Define the Tshark Command (Extract Raw Fields)
+                // We append (>>) to the file we just created.
+                convertCmd = "tshark -r public/temp_merged.pcapng -T fields -E separator=, -E header=n "
+                             "-e ip.src -e ip.dst -e udp.dstport "
+                             // CAT 34 Fields
+                             "-e asterix.034_010_SAC -e asterix.034_010_SIC -e asterix.034_000_VALUE -e asterix.034_030_VALUE "
+                             "-e asterix.034_050_PSR_ANT -e asterix.034_050_PSR_CHAB -e asterix.034_050_PSR_OVL -e asterix.034_050_PSR_MSC "
+                             "-e asterix.034_060_PSR_POL -e asterix.034_060_PSR_REDRAD -e asterix.034_060_PSR_STC "
+                             "-e asterix.034_120_HGT -e asterix.034_120_LAT -e asterix.034_120_LON "
+                             // CAT 48 Fields
+                             "-e asterix.048_010_SAC -e asterix.048_010_SIC -e asterix.048_140_VALUE -e asterix.048_020_TYP "
+                             "-e asterix.048_020_SIM -e asterix.048_020_RDP -e asterix.048_020_SPI -e asterix.048_020_RAB "
+                             "-e asterix.048_040_RHO -e asterix.048_040_THETA -e asterix.048_161_TRN -e asterix.048_042_X "
+                             "-e asterix.048_042_Y -e asterix.048_200_GSP -e asterix.048_200_HDG -e asterix.048_170_CNF "
+                             "-e asterix.048_170_RAD -e asterix.048_170_DOU -e asterix.048_170_MAH -e asterix.048_170_CDM "
+                             "-e asterix.048_210_SIGX -e asterix.048_210_SIGY -e asterix.048_210_SIGV -e asterix.048_210_SIGH "
+                             ">> " + finalFile;
             }
 
-            // Execute Conversion
-            int res2 = system(convertCmd.c_str());
-            
-            if (res2 == 0) {
+            if (system(convertCmd.c_str()) == 0) {
                 Logger::info("Job Complete: File ready at {}", finalFile);
             } else {
                 Logger::error("Conversion failed.");
             }
 
-        }).detach(); // Detach allows it to run independently
+        }).detach();
 
-        return crow::response(202); // HTTP 202 Accepted
+        return crow::response(202);
     });
 }
 
