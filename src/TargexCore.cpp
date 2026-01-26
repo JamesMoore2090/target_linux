@@ -120,7 +120,7 @@ void TargexCore::startCapture() {
     // -b duration:3600: Rotate every hour
     // -b files:24: Keep last 24 files (optional, prevents filling disk)
     // &: Runs in background so it doesn't block your C++ app
-    std::string recCmd = "dumpcap -q -i ens34 -f \"" + filter + "\" "
+    std::string recCmd = "dumpcap -q -i " + m_config.interface + " -f \"" + filter + "\" "
                          "-w \"" + baseFilename + "\" "
                          "-b duration:3600 " 
                          "> /dev/null 2>&1 &"; // Silence output and background it
@@ -131,7 +131,7 @@ void TargexCore::startCapture() {
     // 3. TASK B: THE VIEWER (Live Feed)
     // We sniff the interface independently just for the JSON feed.
     // No writing to file (-w) here.
-    std::string viewCmd = "tshark -l -n -i ens34 -f \"" + filter + "\" "
+    std::string viewCmd = "tshark -l -n -i " + m_config.interface + " -f \"" + filter + "\" "
                           "-T ek -d udp.port==" + std::to_string(m_config.rx_port) + ",asterix";
 
     Logger::info("Starting Live Decoder...");

@@ -66,10 +66,21 @@ void WebServer::setupRoutes() {
     // ---------------------------------------------------------
     // 2. STATIC FILES
     // ---------------------------------------------------------
-    CROW_ROUTE(app, "/")([](){
-        crow::response res;
+    CROW_ROUTE(app, "/")([](const crow::request&, crow::response& res){
         res.set_static_file_info("public/index.html");
-        return res;
+        res.end();
+    });
+
+    // New Route "/log" serves the OLD VIEW (log.html)
+    CROW_ROUTE(app, "/log")([](const crow::request&, crow::response& res){
+        res.set_static_file_info("public/log.html");
+        res.end();
+    });
+    
+    // Serve File Manager (Keep as is)
+    CROW_ROUTE(app, "/files")([](const crow::request&, crow::response& res){
+        res.set_static_file_info("public/files.html");
+        res.end();
     });
 
     // This is the "greedy" route that was causing the problem
@@ -81,6 +92,30 @@ void WebServer::setupRoutes() {
         crow::response res;
         res.set_static_file_info("public/" + path);
         return res;
+    });
+    //SERVE LIBRARY FILES (leaflet.js, milsymbol.js, css)
+    CROW_ROUTE(app, "/libs/<string>")
+    ([](const crow::request&, crow::response& res, std::string filename){
+        // Prevent directory traversal attacks (simple check)
+        if (filename.find("..") != std::string::npos) {
+            res.code = 403;
+            res.end();
+            return;
+        }
+        res.set_static_file_info("public/libs/" + filename);
+        res.end();
+    });
+
+    // 2. SERVE IMAGES (marker-icon.png, etc.)
+    CROW_ROUTE(app, "/libs/images/<string>")
+    ([](const crow::request&, crow::response& res, std::string filename){
+        if (filename.find("..") != std::string::npos) {
+            res.code = 403;
+            res.end();
+            return;
+        }
+        res.set_static_file_info("public/libs/images/" + filename);
+        res.end();
     });
 
     // ---------------------------------------------------------
@@ -318,6 +353,29 @@ void WebServer::setupRoutes() {
         res["status"] = "ok";
         res["url"] = "/download." + format; 
         return crow::response(res);
+    });
+
+    CROW_ROUTE(app, "/api/config")
+    .methods("GET"_method, "POST"_method)
+    ([this](const crow::request& req) {
+        if (req.method == "GET"_method) {
+            crow::json::wvalue x;
+            x["rx_port"] = m_config.rx_port;
+            // You will need to add these fields to your AppConfig struct later
+            x["cot_ip"] = "239.2.3.1"; // Default Multicast
+            x["cot_port"] = 6969;
+            return crow::response(x);
+        }
+        else {
+            auto x = crow::json::load(req.body);
+            if (!x) return crow::response(400);
+            
+            // Update Config (In a real app, save to config.json here)
+            m_config.rx_port = x["rx_port"].i();
+            Logger::info("Config Updated: RX Port {}", m_config.rx_port);
+            
+            return crow::response(200);
+        }
     });
 }
 

@@ -100,6 +100,13 @@ int main(int argc, char* argv[]) {
                     // Logger::info("Packet received!"); 
                     // std::cout << layers.dump() << std::endl; // Print raw JSON to console
                 }
+                // 2. MARS Processing (New)
+                // std::string cotXml = mars.processPacket(packet);
+                // if (!cotXml.empty()) {
+                //     // 3. Send to TAK (Future UDP Sender)
+                //     // udpSender.send(cotXml);
+                //     Logger::debug("Generated CoT: {}", cotXml);
+                // }
             }
         }
 

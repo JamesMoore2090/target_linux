@@ -2,315 +2,361 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>TARGEX Live View</title>
+    <title>TARGEX Tactical Display</title>
+    
+    <link rel="stylesheet" href="/libs/leaflet.css" />
+    <script src="/libs/leaflet.js"></script>
+    <script src="/libs/milsymbol.js"></script>
+
     <style>
-        /* CSS: Dark Mode "Matrix" Style */
-        body { font-family: 'Courier New', monospace; background: #1e1e1e; color: #00ff00; padding: 20px; margin: 0; }
+        body { margin: 0; padding: 0; background: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; display: flex; height: 100vh; }
         
-        /* Header Container */
-        .header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center;
-            border-bottom: 2px solid #333;
-            padding-bottom: 15px;
-            margin-bottom: 15px;
+        /* --- LEFT SIDEBAR --- */
+        #sidebar {
+            width: 300px;
+            background: #1e1e1e;
+            border-right: 1px solid #333;
+            color: #ccc;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+        #map { 
+            flex-grow: 1; 
+            height: 100%; 
+            background: #000;
+            position: relative; /* Ensure it stacks correctly */
+            z-index: 1;         /* Lower than sidebar */
         }
 
-        h1 { margin: 0; font-size: 24px; color: #fff; }
-
-        /* Controls */
-        .controls { display: flex; gap: 15px; align-items: center; }
-        
-        button { 
-            cursor: pointer; 
-            padding: 8px 16px; 
-            font-weight: bold; 
-            border: 1px solid #555;
-            background: #333; 
-            color: #fff;
-            transition: all 0.2s;
+        .sidebar-header {
+            padding: 15px;
+            background: #252526;
+            border-bottom: 2px solid #007acc;
         }
-        button:hover { background: #444; }
+        .sidebar-header h2 { margin: 0; color: #00ff00; font-size: 20px; letter-spacing: 1px; }
+        .sidebar-header span { font-size: 10px; color: #888; }
 
-        /* Status Light */
-        #status-indicator {
-            width: 15px; 
-            height: 15px; 
-            border-radius: 50%; 
-            background: #444; /* Default off */
-            border: 2px solid #222;
+        .section { padding: 15px; border-bottom: 1px solid #333; }
+        .section-title { font-size: 11px; font-weight: bold; color: #007acc; margin-bottom: 10px; text-transform: uppercase; }
+
+        /* Status Indicators */
+        .status-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
+        .status-val { font-family: monospace; color: #fff; }
+        .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+        .green { background: #00ff00; box-shadow: 0 0 5px #00ff00; }
+        .red { background: #ff0000; box-shadow: 0 0 5px #ff0000; }
+        .yellow { background: #ffff00; }
+
+        /* Form Elements */
+        .input-group { margin-bottom: 10px; }
+        .input-group label { display: block; font-size: 11px; color: #888; margin-bottom: 3px; }
+        .input-group input, .input-group select { 
+            width: 95%; background: #333; border: 1px solid #444; 
+            color: #fff; padding: 5px; font-size: 12px; 
         }
+        .input-group input[type="file"] { font-size: 10px; }
 
-        /* Packet Log Window */
-        #packet-log { 
-            height: 80vh; 
-            overflow-y: scroll; 
-            border: 1px solid #444; 
-            padding: 10px; 
-            background: #000; 
-            font-size: 14px;
+        .btn { 
+            width: 100%; padding: 8px; cursor: pointer; border: none; 
+            font-weight: bold; background: #007acc; color: white; margin-top: 5px;
         }
-        
-        /* Individual Log Lines */
-        .packet { border-bottom: 1px solid #333; padding: 2px 0; display: flex; }
-        .ts { color: #888; margin-right: 10px; width: 140px; flex-shrink: 0; }
-        .data { color: #0f0; }
+        .btn:hover { background: #0099ff; }
+        .btn-nav { background: #444; margin-top: 5px; }
 
-        #processing-modal {
-        display: none; /* Hidden by default */
-        position: fixed;
-        z-index: 1000;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0,0,0,0.8);
-        align-items: center;
-        justify-content: center;
-        flex-direction: column;
-    }
-    .spinner {
-        border: 8px solid #f3f3f3;
-        border-top: 8px solid #00ff00; /* Neon Green */
-        border-radius: 50%;
-        width: 60px;
-        height: 60px;
-        animation: spin 1s linear infinite;
-        margin-bottom: 20px;
-    }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        /* --- MAP AREA --- */
+        #map { flex-grow: 1; height: 100%; background: #000; }
+
+        /* Custom Icon Styling */
+        .mil-icon { background: transparent; border: none; }
     </style>
 </head>
 <body>
 
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2>TARGEX</h2>
+            <span>TACTICAL DISPLAY SYSTEM</span>
+        </div>
 
+        <div class="section">
+            <div class="section-title">System Status</div>
+            
+            <div class="status-row">
+                <span>Web Server</span>
+                <span class="status-val"><span id="ws-ind" class="indicator red"></span><span id="ws-text">Offline</span></span>
+            </div>
+            <div class="status-row">
+                <span>Rx Packets</span>
+                <span class="status-val" id="pkt-count" style="color: #00ff00;">0</span>
+            </div>
+             <div class="status-row">
+                <span>Active Tracks</span>
+                <span class="status-val" id="trk-count">0</span>
+            </div>
+        </div>
 
-    <div class="header">
-        <h1>TARGEX TACTICAL INTERFACE</h1>
-        
-        <div class="controls">
-            <div id="status-indicator" title="Capture Status"></div>
+        <div class="section">
+            <div class="section-title">Network Configuration</div>
             
-            <button id="toggle-btn" onclick="toggleCapture()">Initializing...</button>
+            <div class="input-group">
+                <label>ASTERIX RX PORT</label>
+                <input type="number" id="rx-port" value="8600">
+            </div>
+
+            <div class="input-group">
+                <label>CoT DESTINATION IP</label>
+                <input type="text" id="cot-ip" value="239.2.3.1">
+            </div>
+
+            <div class="input-group">
+                <label>CoT PORT</label>
+                <input type="number" id="cot-port" value="6969">
+            </div>
+
+            <div class="status-row">
+                <span>CoT Link Status</span>
+                <span class="status-val"><span class="indicator yellow"></span>UDP/Ready</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">TAK SSL Integration</div>
             
-            <button onclick="location.href='/files.html'">File Manager</button>
-            <button onclick="location.href='/settings.html'">Settings</button>
+            <div class="input-group">
+                <label>Protocol</label>
+                <select id="cot-proto">
+                    <option value="udp">UDP (No SSL)</option>
+                    <option value="tcp">TCP (Unsecured)</option>
+                    <option value="ssl">SSL / TLS (TAK Server)</option>
+                </select>
+            </div>
+
+            <div id="ssl-files" style="display:none; border: 1px dashed #444; padding: 5px;">
+                <div class="input-group">
+                    <label>Client Cert (.pem)</label>
+                    <input type="file" id="cert-file">
+                </div>
+                <div class="input-group">
+                    <label>Private Key (.key)</label>
+                    <input type="file" id="key-file">
+                </div>
+                <div class="input-group">
+                    <label>CA Certificate (.pem)</label>
+                    <input type="file" id="ca-file">
+                </div>
+            </div>
+
+            <button class="btn" onclick="applyConfig()">APPLY CONFIGURATION</button>
+        </div>
+
+        <div class="section" style="border:none;">
+            <button class="btn btn-nav" onclick="location.href='/log'">VIEW LIVE LOG</button>
+            <button class="btn btn-nav" onclick="location.href='/files'">FILE MANAGER</button>
         </div>
     </div>
 
-    <div id="packet-log">
-        <div class="packet"><span class="ts">[SYSTEM]</span><span class="data">Waiting for data stream...</span></div>
-    </div>
+    <div id="map"></div>
 
     <script>
-        // --- 1. THE CONFIGURATION MAP ---
-    // This matches the JSON structure you provided
-    const ASTERIX_MAP = {
-        "CAT_34": [
-            // Standard Keys from your log
-            { key: "asterix_asterix_category", label: "CAT" },
-            { key: "asterix_asterix_SAC", label: "SAC" },
-            { key: "asterix_asterix_SIC", label: "SIC" },
-            { key: "asterix_asterix_TOD", label: "Time" },
-            
-            
-            // 034 Specifics (Underscores instead of dots)
-            { key: "asterix_asterix_034_000_MT", label: "MsgType" },
-            { key: "asterix_asterix_034_050_02_ANT", label: "Antenna" },
-            { key: "asterix_asterix_034_050_02_CHAB", label: "ChAB" },
-            { key: "asterix_asterix_034_050_02_OVL", label: "OVL" },
-            { key: "asterix_asterix_034_050_02_MSC", label: "MSC" },
-            { key: "asterix_asterix_034_060_02_POL", label: "POL" },
-            { key: "asterix_asterix_034_060_02_RED_RAD", label: "RedRad" },
-            { key: "asterix_asterix_034_060_02_STC", label: "STC" },
-            { key: "asterix_asterix_034_120_H", label: "Height" },
-            { key: "asterix_asterix_034_120_LAT", label: "Lat" },
-            { key: "asterix_asterix_034_120_LON", label: "Lon" }
-        ],
-        "CAT_48": [
-            // Assuming similar pattern for Cat 48 (Tshark usually follows suit)
-            { key: "asterix_asterix_category", label: "CAT" },
-            { key: "asterix_asterix_048_161_TN", label: "Track#" },
-            { key: "asterix_asterix_SAC", label: "SAC" },
-            { key: "asterix_asterix_SIC", label: "SIC" },
-            { key: "asterix_asterix_TOD", label: "Time" },
-            
-            { key: "asterix_asterix_048_020_TYP", label: "Type" },
-            { key: "asterix_asterix_048_020_SIM", label: "SIM" },
-            { key: "asterix_asterix_048_020_RDP", label: "RDP" },
-            { key: "asterix_asterix_048_020_SPI", label: "SPI" },
-            { key: "asterix_asterix_048_040_RHO", label: "Rho" },
-            { key: "asterix_asterix_048_040_THETA", label: "Theta" },
-            
-            { key: "asterix_asterix_048_042_X", label: "X" },
-            { key: "asterix_asterix_048_042_Y", label: "Y" },
-            { key: "asterix_asterix_048_200_GSP", label: "GroundSpeed" },
-            { key: "asterix_asterix_048_200_HDG", label: "Heading" },
-            { key: "asterix_asterix_048_170_CNF", label: "Confirmed" },
-            { key: "asterix_asterix_048_170_RAD", label: "Radar" },
-            { key: "asterix_asterix_048_170_DOU", label: "DOU" },
-            { key: "asterix_asterix_048_170_MAH", label: "MAH" },
-            { key: "asterix_asterix_048_170_CDM", label: "CDM" },
-            { key: "asterix_asterix_048_210_SIGX", label: "Sig X" },
-            { key: "asterix_asterix_048_210_SIGY", label: "Sig Y" },
-            { key: "asterix_asterix_048_210_SIGV", label: "Sig V" },
-            { key: "asterix_asterix_048_210_SIGH", label: "Sig H" }
-        ]
-    };
-
-    // --- 2. WEBSOCKET SETUP ---
-    const logDiv = document.getElementById('packet-log');
-    const socket = new WebSocket("ws://" + window.location.host + "/ws");
-
-    socket.onopen = () => {
-        addLog("SYSTEM", "Connected to TARGEX Core.", "#00ff00");
-    };
-
-    socket.onmessage = (event) => {
+        // --- MAP INITIALIZATION ---
+        let map;
         try {
-            const packet = JSON.parse(event.data);
-            if (packet.index) return; // Ignore Tshark metadata
+            if (typeof L === 'undefined') throw new Error("Leaflet Lib Missing");
+            
+            // 1. Initialize Map
+            map = L.map('map', {
+                zoomControl: false // Move zoom control if needed, or keep default
+            }).setView([0, 0], 2);
+            
+            // 2. Add Tiles
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: 'Offline/Dark', maxZoom: 19
+            }).addTo(map);
 
-            // --- DECODE LOGIC ---
-            let summary = "";
-            let style = "";
-            let sourceLabel = "UNK";
-
-            // 1. Get Base IP Info
-            let srcIP = "Unknown";
-            let dstIP = "Unknown";
-            let port = "Unknown";
-
-            if (packet.layers && packet.layers.ip) {
-                srcIP = packet.layers.ip.ip_ip_src;
-                dstIP = packet.layers.ip.ip_ip_dst;
-            }
-            if (packet.layers && packet.layers.udp) {
-                port = packet.layers.udp.udp_udp_dstport;
-            }
-
-            // 2. Check for ASTERIX Data
-            const asterixData = packet.layers ? packet.layers.asterix : null;
-
-            if (asterixData) {
-                // DETECT CATEGORY DIRECTLY
-                // Your log shows: asterix_asterix_category: "34"
-                const catID = asterixData.asterix_asterix_category; 
-
-                // Helper to build string based on the map
-                const parseCat = (map) => {
-                    let dataStr = "";
-                    map.forEach(field => {
-                        const val = asterixData[field.key];
-                        // Only show fields that actually exist in this packet
-                        if (val !== undefined && val !== null) {
-                            dataStr += `${field.label}:${val} | `;
-                        }
-                    });
-                    return dataStr;
-                };
-
-                if (catID === "34" || catID === 34) {
-                    sourceLabel = "CAT 34";
-                    style = "color: orange;";
-                    summary = parseCat(ASTERIX_MAP.CAT_34);
-                } 
-                else if (catID === "48" || catID === 48) {
-                    sourceLabel = "CAT 48";
-                    style = "color: cyan;";
-                    summary = parseCat(ASTERIX_MAP.CAT_48);
-                } 
-                else {
-                    sourceLabel = "ASTERIX";
-                    summary = "Unknown Cat: " + catID;
-                    console.log("UNMAPPED CAT:", asterixData);
-                }
-            } else {
-                // Fallback for non-asterix traffic
-                sourceLabel = "IP/UDP";
-                summary = `SRC: ${srcIP} -> DST: ${dstIP} : ${port}`;
-            }
-
-            // Prepend IP info to ASTERIX data if space permits
-            if(sourceLabel.includes("CAT")) {
-                summary = `[${srcIP}:${port}] ` + summary;
-            }
-
-            addLog(sourceLabel, summary, style);
+            // 3. CRITICAL FIX: Force Leaflet to re-measure the <div> size
+            // The sidebar layout can cause the map to think it has 0 width at startup.
+            setTimeout(() => { map.invalidateSize(); }, 100);
 
         } catch(e) {
-            console.error(e);
+            alert("Map Library Missing! Check /public/libs folder.");
         }
-    };
 
-    function addLog(source, text, style = "") {
-        const logDiv = document.getElementById('packet-log');
+        // --- GLOBAL STATE ---
+        const tracks = {}; 
+        let pktCounter = 0;
+        let hasCentered = false; 
+        let SENSOR_LAT = 38.5134; 
+        let SENSOR_LON = -77.3008;
 
-        // 1. SMART SCROLL CHECK
-        // We check if the user is near the bottom BEFORE adding the new element.
-        // We use a 50px tolerance so it feels natural even if not pixel-perfect.
-        const tolerance = 50;
-        const isAtBottom = (logDiv.scrollHeight - logDiv.scrollTop - logDiv.clientHeight) < tolerance;
+        // --- UI UPDATERS ---
+        const ui = {
+            wsInd: document.getElementById('ws-ind'),
+            wsText: document.getElementById('ws-text'),
+            pktCount: document.getElementById('pkt-count'),
+            trkCount: document.getElementById('trk-count'),
+            protoSelect: document.getElementById('cot-proto'),
+            sslPanel: document.getElementById('ssl-files')
+        };
 
-        // 2. CREATE ELEMENT
-        const div = document.createElement('div');
-        div.className = 'packet';
-        const time = new Date().toLocaleTimeString();
-        
-        div.innerHTML = `
-            <span class="ts">[${time}] <br/> ${source}</span>
-            <span class="data" style="${style}">${text}</span>
-        `;
-        
-        logDiv.appendChild(div);
-        
-        // 3. CONDITIONAL SCROLL
-        // Only force scroll down if the user was already at the bottom.
-        if (isAtBottom) {
-            logDiv.scrollTop = logDiv.scrollHeight;
-        }
-    }
+        // UI Logic: Show/Hide SSL fields
+        ui.protoSelect.addEventListener('change', (e) => {
+            ui.sslPanel.style.display = (e.target.value === 'ssl') ? 'block' : 'none';
+        });
+
+        // --- WEBSOCKET ---
+        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+
+        socket.onopen = () => {
+            ui.wsInd.className = "indicator green";
+            ui.wsText.textContent = "Online";
+        };
 
         socket.onclose = () => {
-            console.log("Connection lost.");
-            // Optional: Auto-reconnect logic could go here
+            ui.wsInd.className = "indicator red";
+            ui.wsText.textContent = "Disconnected";
         };
-        
-        // --- Status Loop (Keep your existing updateStatus logic here) ---
-        async function updateStatus() {
-            try {
-                const res = await fetch('/api/capture/status');
-                const data = await res.json();
-                const btn = document.getElementById('toggle-btn');
-                const ind = document.getElementById('status-indicator');
 
-                if (data.running) {
-                    btn.textContent = "STOP CAPTURE";
-                    btn.style.background = "darkred";
-                    ind.style.background = "#00ff00"; 
-                    ind.style.boxShadow = "0 0 10px #00ff00";
+        socket.onmessage = (event) => {
+            pktCounter++;
+            ui.pktCount.textContent = pktCounter.toLocaleString();
+            try { processPacket(JSON.parse(event.data)); } catch (e) { }
+        };
+
+        // --- DROPOUT LOGIC (5 Sec) ---
+        setInterval(() => {
+            const now = Date.now();
+            let count = 0;
+            Object.keys(tracks).forEach(id => {
+                if (now - tracks[id].lastUpdate > 5000) {
+                    if (map) map.removeLayer(tracks[id].marker);
+                    delete tracks[id];
                 } else {
-                    btn.textContent = "START CAPTURE";
-                    btn.style.background = "darkgreen";
-                    ind.style.background = "red"; 
-                    ind.style.boxShadow = "none";
+                    count++;
                 }
-            } catch(e) {}
-        }
-
-        async function toggleCapture() {
-            const btn = document.getElementById('toggle-btn');
-            const isRunning = btn.textContent.includes("STOP");
-            await fetch('/api/capture/control', {
-                method: 'POST',
-                body: JSON.stringify({ action: !isRunning })
             });
-            setTimeout(updateStatus, 500);
+            ui.trkCount.textContent = count;
+        }, 1000);
+
+        // --- PACKET PROCESSING ---
+        function getFloat(val) {
+            if (!val) return null;
+            if (Array.isArray(val)) return parseFloat(val[0]);
+            return parseFloat(val);
         }
 
-        setInterval(updateStatus, 2000);
-        updateStatus();
+        function processPacket(packet) {
+            if (!packet.layers || !packet.layers.asterix) return;
+            const ast = packet.layers.asterix;
+
+            // ID
+            let trackId = ast.asterix_asterix_048_161_TN || ast.asterix_048_161_TN || 
+                          ast.asterix_asterix_034_161_TN || ast.asterix_034_161_TN || "UNK";
+            if (Array.isArray(trackId)) trackId = trackId[0];
+
+            let lat = null, lon = null;
+
+            // 1. Explicit Lat/Lon (Cat 34)
+            const rawLat34 = ast.asterix_asterix_034_120_LAT || ast.asterix_034_120_LAT;
+            const rawLon34 = ast.asterix_asterix_034_120_LON || ast.asterix_034_120_LON;
+
+            if (rawLat34 && rawLon34) {
+                lat = getFloat(rawLat34);
+                lon = getFloat(rawLon34);
+            } 
+            // 2. Polar Calc (Cat 48)
+            else {
+                const rho = getFloat(ast.asterix_asterix_048_040_RHO || ast.asterix_048_040_RHO);
+                const theta = getFloat(ast.asterix_asterix_048_040_THETA || ast.asterix_048_040_THETA);
+                if (rho !== null && theta !== null) {
+                    const coords = calculateLatLon(SENSOR_LAT, SENSOR_LON, rho, theta);
+                    lat = coords.lat;
+                    lon = coords.lon;
+                }
+            }
+
+            if (lat !== null && lon !== null && !isNaN(lat)) {
+                if (!hasCentered && map) { map.setView([lat, lon], 10); hasCentered = true; }
+                updateTrack(trackId, lat, lon);
+            }
+        }
+
+        function calculateLatLon(lat1, lon1, rangeNM, bearingDeg) {
+            const R = 3440.065; 
+            const radLat1 = lat1 * (Math.PI / 180);
+            const radLon1 = lon1 * (Math.PI / 180);
+            const radBearing = bearingDeg * (Math.PI / 180);
+            const angularDist = rangeNM / R;
+            const radLat2 = Math.asin(Math.sin(radLat1) * Math.cos(angularDist) + Math.cos(radLat1) * Math.sin(angularDist) * Math.cos(radBearing));
+            const radLon2 = radLon1 + Math.atan2(Math.sin(radBearing) * Math.sin(angularDist) * Math.cos(radLat1), Math.cos(angularDist) - Math.sin(radLat1) * Math.sin(radLat2));
+            return { lat: radLat2 * (180 / Math.PI), lon: radLon2 * (180 / Math.PI) };
+        }
+
+        function updateTrack(id, lat, lon) {
+            if (!map || typeof ms === 'undefined') return;
+            const numLat = Number(lat);
+            const numLon = Number(lon);
+            if (isNaN(numLat)) return;
+
+            // IDENTITY: Unknown Surface (Sea)
+            const sidc = `SUSP-------****`; 
+
+            const mysymbol = new ms.Symbol(sidc, { size: 30, uniqueDesignation: id, colorMode: "Light" });
+            const icon = L.divIcon({ className: 'mil-icon', html: mysymbol.asSVG(), iconAnchor: [mysymbol.getAnchor().x, mysymbol.getAnchor().y] });
+
+            if (tracks[id]) {
+                tracks[id].marker.setLatLng([numLat, numLon]);
+                tracks[id].marker.setIcon(icon);
+                tracks[id].lastUpdate = Date.now();
+            } else {
+                const marker = L.marker([numLat, numLon], {icon: icon}).addTo(map);
+                marker.bindPopup(`<b>Track: ${id}</b><br>Lat: ${numLat.toFixed(4)}<br>Lon: ${numLon.toFixed(4)}`);
+                tracks[id] = { marker: marker, lastUpdate: Date.now() };
+            }
+        }
+
+        // --- CONFIG & SSL UPLOAD ---
+        async function applyConfig() {
+            const config = {
+                rx_port: parseInt(document.getElementById('rx-port').value),
+                cot_ip: document.getElementById('cot-ip').value,
+                cot_port: parseInt(document.getElementById('cot-port').value),
+                cot_proto: document.getElementById('cot-proto').value
+            };
+
+            // 1. Send Basic Config
+            try {
+                const res = await fetch('/api/config', {
+                    method: 'POST',
+                    body: JSON.stringify(config)
+                });
+                if(res.ok) alert("Network Config Applied!");
+            } catch(e) { alert("Error sending config"); }
+
+            // 2. Handle SSL Files (If selected)
+            if (config.cot_proto === 'ssl') {
+                const formData = new FormData();
+                const cert = document.getElementById('cert-file').files[0];
+                const key = document.getElementById('key-file').files[0];
+                const ca = document.getElementById('ca-file').files[0];
+
+                if (cert) formData.append('cert', cert);
+                if (key) formData.append('key', key);
+                if (ca) formData.append('ca', ca);
+
+                if (cert || key || ca) {
+                    try {
+                        const sslRes = await fetch('/api/upload_ssl', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        if(sslRes.ok) alert("SSL Certificates Uploaded Successfully!");
+                    } catch(e) { alert("SSL Upload Failed"); }
+                }
+            }
+        }
     </script>
 </body>
 </html>
