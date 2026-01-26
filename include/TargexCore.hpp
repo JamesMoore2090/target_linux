@@ -3,6 +3,7 @@
 #include <vector>
 #include <atomic>
 #include <cstdio> // Required for FILE*
+#include <mutex>
 #include "ConfigLoader.hpp"
 #include <nlohmann/json.hpp> // We parse JSON immediately now
 
@@ -37,4 +38,5 @@ private:
     char m_lineBuffer[65536];
     std::atomic<bool> m_isCapturing{false};
     std::string m_currentFile;
+    std::mutex m_pipeMutex;
 };

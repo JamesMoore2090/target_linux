@@ -5,7 +5,8 @@
     "tick_rate_ms": 10,
     "pid_file": "/var/run/targex.pid",
     "site": "test",
-    "isMSCTActive": false
+    "isMSCTActive": false,
+    "webport": 8080
   },
   "logging": {
     "level": "debug",

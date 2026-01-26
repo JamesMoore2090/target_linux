@@ -25,6 +25,7 @@ bool ConfigLoader::load(const std::string& path, AppConfig& config) {
             config.site_name = j["system"].value("site", "");
             config.tick_rate_ms = j["system"].value("tick_rate_ms", 10);
             config.pid_file = j["system"].value("pid_file", "/tmp/targex.pid");
+            config.rx_port_web = j["system"].value("webport", 8080);
         }
 
         if (j.contains("logging")) {

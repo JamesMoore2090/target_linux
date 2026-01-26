@@ -12,9 +12,42 @@
         button { padding: 10px 20px; cursor: pointer; background: #333; color: white; border: 1px solid #555; }
         button:hover { background: #444; }
         .actions { margin-bottom: 20px; display: flex; gap: 10px; }
+
+        #processing-modal {
+        display: none; /* Hidden by default */
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0,0,0,0.8);
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+    }
+    .spinner {
+        border: 8px solid #f3f3f3;
+        border-top: 8px solid #00ff00; /* Neon Green */
+        border-radius: 50%;
+        width: 60px;
+        height: 60px;
+        animation: spin 1s linear infinite;
+        margin-bottom: 20px;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
+
+        
+
+    <div id="processing-modal">
+        <div class="spinner"></div>
+        <h2 style="color: #00ff00; font-family: monospace;">PROCESSING DATA...</h2>
+        <p style="color: #ccc;">Merging and Converting Files. Please Wait.</p>
+    </div>
+
     <h1>DATA ARCHIVE</h1>
     <div class="actions">
         <button onclick="location.href='/'">← Back to Live View</button>
@@ -49,7 +82,8 @@
                 const tr = document.createElement('tr');
                 
                 // Checkbox Logic
-                let checkbox = `<input type="checkbox" value="${file.name}" class="file-chk">`;
+                // FIX: Changed "file-chk" to "file-checkbox" so the download function can find it!
+                let checkbox = `<input type="checkbox" value="${file.name}" class="file-checkbox">`;
                 let status = "Ready";
                 
                 if (file.locked) {
@@ -69,30 +103,52 @@
         }
 
         async function processFiles() {
-            const checks = document.querySelectorAll('.file-chk:checked');
-            if (checks.length === 0) return alert("Select at least one file!");
+            // 1. Get Selected Files
+        const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+        const files = Array.from(checkboxes).map(cb => cb.value);
+        const format = document.getElementById('export-format').value;
 
-            const files = Array.from(checks).map(c => c.value);
-            const format = document.getElementById('export-format').value;
+        if (files.length === 0) {
+            alert("Please select at least one file!");
+            return;
+        }
 
-            const btn = document.querySelector('button[style*="004400"]');
-            btn.textContent = "Processing... (Check Logs)";
-            btn.disabled = true;
+        // 2. SHOW MODAL
+        const modal = document.getElementById('processing-modal');
+        modal.style.display = "flex";
 
-            // Trigger Background Job
-            await fetch('/api/merge', {
+        try {
+            // 3. SEND REQUEST (Waits for C++ to finish)
+            const res = await fetch('/api/merge', {
                 method: 'POST',
                 body: JSON.stringify({ files: files, format: format })
             });
 
-            // For this simple demo, we wait 5 seconds then guess it's done.
-            // In a real app, you'd poll a status endpoint.
-            setTimeout(() => {
-                alert("Processing Complete. Download starting.");
-                window.location.href = `/download.${format}`; // Serves public/download.xxx
-                btn.textContent = "MERGE & DOWNLOAD";
-                btn.disabled = false;
-            }, 5000); 
+            if (!res.ok) throw new Error("Server Error");
+
+            const data = await res.json(); // Get the { url: "/download.csv" } response
+
+            // 4. GENERATE UNIQUE FILENAME
+            const now = new Date();
+            // Format: TARGEX_Merge_YYYYMMDD_HHMMSS.csv
+            const timestamp = now.toISOString().replace(/[-:T]/g, '').split('.')[0]; 
+            const uniqueName = `TARGEX_Merge_${timestamp}.${format}`;
+
+            // 5. FORCE DOWNLOAD
+            // We create an invisible link and click it
+            const link = document.createElement('a');
+            link.href = data.url;        // The static file on the server
+            link.download = uniqueName;  // The name the user sees
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+        } catch (e) {
+            alert("Error processing files: " + e.message);
+        } finally {
+            // 6. HIDE MODAL
+            modal.style.display = "none";
+        }
         }
 
         loadFiles();

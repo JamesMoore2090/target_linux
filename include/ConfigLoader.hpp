@@ -9,6 +9,7 @@ struct AppConfig {
     std::string pid_file = "/var/run/targex.pid";
     std::string site_name = "";
     bool isMSCTactive = false;
+    int rx_port_web = 8080;
     
     // Logging
     std::string log_level = "info";

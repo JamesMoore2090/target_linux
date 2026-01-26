@@ -103,42 +103,46 @@ bool TargexCore::initialize() {
     return true; // Return false here to simulate a startup failure
 }
 
-void TargexCore::startCapture(){
+void TargexCore::startCapture() {
+    std::lock_guard<std::mutex> lock(m_pipeMutex);
     if (m_isCapturing) return;
 
-   /// 1. GENERATE TIMESTAMP
-    auto now = std::time(nullptr);
-    auto tm = *std::localtime(&now);
+    // 1. PREPARE VARIABLES
+    // We don't need a timestamp here anymore! 
+    // dumpcap adds "_00001_YYYYMMDD..." automatically when using ring buffers (-b).
+    std::string baseFilename = "output/" + m_config.site_name + "_raw.pcapng";
     
-    std::ostringstream oss;
-    oss << "output/" << m_config.site_name << "_" 
-        << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".pcapng";
-        
-    // Update the class member so we know what file we are writing to
-    m_currentFile = oss.str();
-
-    // 2. STRICT FILTER (The fix)
-    // We filter at the very beginning (dumpcap) so we don't even record the noise.
-    // "udp port 8600" means: Only capture UDP traffic on port 8600.
+    // Strict ASTERIX Filter
     std::string filter = "udp port " + std::to_string(m_config.rx_port);
 
-    // 3. PIPELINE
-    std::string cmd = "dumpcap -q -i ens34 -f \"" + filter + "\" -w - "; 
-    cmd += "| tee \"" + m_currentFile + "\" ";
-    cmd += "| tshark -l -n -i - -T ek -d udp.port==" + std::to_string(m_config.rx_port) + ",asterix";
+    // 2. TASK A: THE RECORDER (Background Service)
+    // -q: Quiet
+    // -b duration:3600: Rotate every hour
+    // -b files:24: Keep last 24 files (optional, prevents filling disk)
+    // &: Runs in background so it doesn't block your C++ app
+    std::string recCmd = "dumpcap -q -i ens34 -f \"" + filter + "\" "
+                         "-w \"" + baseFilename + "\" "
+                         "-b duration:3600 " 
+                         "> /dev/null 2>&1 &"; // Silence output and background it
 
-    Logger::info("Starting Capture Pipeline with filter: {}", filter);
+    Logger::info("Starting Background Recorder...");
+    system(recCmd.c_str());
 
-    // Logger::info("CMD: {}", cmd); // Uncomment to debug command
+    // 3. TASK B: THE VIEWER (Live Feed)
+    // We sniff the interface independently just for the JSON feed.
+    // No writing to file (-w) here.
+    std::string viewCmd = "tshark -l -n -i ens34 -f \"" + filter + "\" "
+                          "-T ek -d udp.port==" + std::to_string(m_config.rx_port) + ",asterix";
 
-    // 3. Open Pipe
-    // We are reading the output of the FINAL tshark command in the chain
-    m_tsharkPipe = popen(cmd.c_str(), "r");
+    Logger::info("Starting Live Decoder...");
+    
+    // We open this one with popen so we can read the JSON
+    m_tsharkPipe = popen(viewCmd.c_str(), "r");
     
     if (m_tsharkPipe) {
         m_isCapturing = true;
+        m_currentFile = baseFilename; // Just for reference
     }
-
 }
 
 void TargexCore::stopCapture() {
@@ -151,6 +155,8 @@ void TargexCore::stopCapture() {
     // The '-9' means "Force Kill" (cannot be ignored).
     int res1 = system("pkill -9 tshark");
     int res2 = system("pkill -9 dumpcap");
+
+    std::lock_guard<std::mutex> lock(m_pipeMutex);
 
     // 2. CLOSE HANDLE SECOND
     // Now that Tshark is dead, pclose will return immediately.
@@ -168,6 +174,7 @@ void TargexCore::stopCapture() {
 }
 
 json TargexCore::pollData() {
+    std::lock_guard<std::mutex> lock(m_pipeMutex);
     if (!m_isCapturing || !m_tsharkPipe) return nullptr;
 
     char buffer[65536]; // Keep the large buffer

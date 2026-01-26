@@ -6,6 +6,9 @@
 #include <csignal>
 #include <atomic>
 #include <thread>
+#include <ctime>
+#include <iomanip>
+#include <sstream>
 #include "TargexCore.hpp"
 #include "Logger.hpp"
 #include "ConfigLoader.hpp"
@@ -39,7 +42,17 @@ int main(int argc, char* argv[]) {
     }
     // INITIALIZE LOGGER
     // Using values from your default.json
-    Logger::init("logs/targex.log", config.log_level);
+    /// 1. GENERATE TIMESTAMP
+    auto now = std::time(nullptr);
+    auto tm = *std::localtime(&now);
+    
+    std::ostringstream oss;
+    oss << "logs/targex_" 
+        << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".log";
+        
+    // Update the class member so we know what file we are writing to
+    std::string logFile = oss.str();
+    Logger::init(logFile, config.log_level);
 
     
 
@@ -75,7 +88,7 @@ int main(int argc, char* argv[]) {
             // // B. Check Validity (using .is_null() from nlohmann library)
             if (!packetJson.is_null()) {
                 std::string debugStr = packetJson.dump();
-                std::cout << "[DEBUG] JSON: " << debugStr << "..." << std::endl;
+                Logger::debug("Asterix Packet to JSON: {}", debugStr );
                 // C. Example Logic: Accessing Data
                 // Tshark -T ek structure is usually: { "layers": { "ip": { ... }, "udp": { ... } } }
                 webServer.broadcastPacket(packetJson.dump());
