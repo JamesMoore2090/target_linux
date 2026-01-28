@@ -1,21 +1,21 @@
-#pragma once
+#ifndef MARS_ENGINE_HPP
+#define MARS_ENGINE_HPP
 
 #include <string>
 #include <vector>
+#include <functional>
 #include <nlohmann/json.hpp>
-#include <functional> 
-
-// OpenSSL Headers
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#include <atomic>
+#include <mutex> // <--- ADDED
 
-// Configuration Struct
 struct CoTConfig {
     std::string ip = "239.2.3.1";
     int port = 6969;
-    std::string protocol = "udp"; // "udp", "tcp", "ssl"
+    std::string protocol = "udp"; // udp, tcp, ssl
     
-    // SSL Specifics
+    // SSL Certs
     std::string clientP12Path;
     std::string clientPwd;
     std::string trustP12Path;
@@ -24,45 +24,50 @@ struct CoTConfig {
 
 class MarsEngine {
 public:
-    // Define the callback type
     using StatusCallback = std::function<void(std::string)>;
 
     MarsEngine();
     ~MarsEngine();
 
-    // Configuration & Processing
     void updateConfig(const CoTConfig& config);
     void processAndSend(const nlohmann::json& packet);
-
-    // Register the UI callback
-    void setStatusCallback(StatusCallback cb) { m_statusCallback = cb; }
     
-    // Status Getter
-    std::string getConnectionStatus() const { return m_connStatus; }
+    // Thread-Safe Setter
+    void setStatusCallback(StatusCallback cb) { 
+        std::lock_guard<std::mutex> lock(m_statusMutex);
+        m_statusCallback = cb; 
+    }
+
+    // Thread-Safe Getter (THE FIX)
+    std::string getConnectionStatus() const { 
+        std::lock_guard<std::mutex> lock(m_statusMutex);
+        return m_connStatus; 
+    }
 
 private:
-    CoTConfig m_config;
-    int m_sockFd;
-    StatusCallback m_statusCallback;
-    
-    // SSL Context
-    SSL_CTX* m_sslCtx;
-    SSL* m_ssl;
-    
-    std::string m_connStatus; 
+    struct GeoPoint { double lat; double lon; };
 
-    // Network Helpers
     void initSocket();
     bool initSSL();
     void cleanupSSL();
     void sendData(const std::string& data);
+    std::string generateCoT(const nlohmann::json& ast);
+    GeoPoint calculateLatLon(double rangeNM, double bearingDeg);
+    
+    // Thread-Safe Internal Setter
     void updateStatus(const std::string& status);
 
-    // Data Helpers
-    std::string generateCoT(const nlohmann::json& ast);
+    int m_sockFd;
+    CoTConfig m_config;
     
-    
-    // Math for Polar -> Lat/Lon conversion
-    struct GeoPoint { double lat; double lon; };
-    GeoPoint calculateLatLon(double range, double bearing);
+    // SSL Handles
+    SSL_CTX* m_sslCtx;
+    SSL* m_ssl;
+
+    // Status State
+    std::string m_connStatus;
+    StatusCallback m_statusCallback;
+    mutable std::mutex m_statusMutex; // <--- THE MUTEX
 };
+
+#endif

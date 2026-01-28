@@ -1,6 +1,4 @@
-/* * TARGEX CLI Entry Point
- * Concepts: Argument Parsing, Signal Handling, Main Loop
- */
+/* * TARGEX CLI Entry Point */
 
 #include <iostream>
 #include <csignal>
@@ -13,111 +11,66 @@
 #include "Logger.hpp"
 #include "ConfigLoader.hpp"
 #include "WebServer.hpp"
-#include "MarsEngine.hpp"
 
-// Atomic flag allows the signal handler to talk to the main loop safely
 std::atomic<bool> keepRunning(true);
 
-// specific signal handler function
 void signalHandler(int signum) {
     std::cout << "\nInterrupt signal (" << signum << ") received. Shutting down TARGEX...\n";
     keepRunning = false;
 }
 
 int main(int argc, char* argv[]) {
-    // 1. Register signal handlers (Ctrl+C)
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
 
-    // 2. Parse CLI Arguments (Manual or using a library like CLI11)
     std::string configPath = "resources/config.json";
-    if (argc > 1) {
-        configPath = argv[1];
-    }
-    // Load Config
+    if (argc > 1) configPath = argv[1];
+
     AppConfig config;
     if (!ConfigLoader::load(configPath, config)) {
-        // Fallback because Logger isn't ready yet
         std::cerr << "Failed to load config!" << std::endl;
         return 1;
     }
-    // INITIALIZE LOGGER
-    // Using values from your default.json
-    /// 1. GENERATE TIMESTAMP
+
+    // Logger Init
     auto now = std::time(nullptr);
     auto tm = *std::localtime(&now);
-    
     std::ostringstream oss;
-    oss << "logs/targex_" 
-        << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".log";
-        
-    // Update the class member so we know what file we are writing to
-    std::string logFile = oss.str();
-    Logger::init(logFile, config.log_level);
+    oss << "logs/targex_" << std::put_time(&tm, "%Y%m%d_%H%M%S") << ".log";
+    Logger::init(oss.str(), config.log_level);
 
-    
-
-    // USAGE EXAMPLES
     Logger::info("TARGEX Server Starting...");
-    Logger::info("Listening on Port: {}", config.rx_port); // {} is the placeholder for variables
-    Logger::debug("Debug mode enabled. Verbose logging active.");
+    Logger::info("Listening on Port: {}", config.rx_port);
 
-    Logger::info("Starting TARGEX CLI Server...");
-    // std::cout << "[INFO] Loading configuration from: " << configPath << std::endl;
-
-    // 3. Initialize Core System
-    // RAII pattern: The 'engine' object is created here.
+    // 1. Create Core Systems
     TargexCore engine(config); 
-    MarsEngine mars;
-    // 2. Start Web Server
-    WebServer webServer(config, engine, mars);
-    webServer.start(); // Runs in background thread
+    WebServer webServer(config, engine);
     
     try {
         if (!engine.initialize()) {
             Logger::error("[ERROR] Initialization failed.");
             return 1;
         }
+
+        // 2. Start Everything
         engine.startCapture();
-        // 4. Main Processing Loop
-        // A headless server usually loops infinitely until told to stop
+        webServer.start(); 
+
+        Logger::info("System Ready. Web Interface available at http://localhost:{}", config.rx_port_web);
+
+        // 3. Main Loop (IDLE)
+        // We do NOT call pollData() here. We just wait for Ctrl+C.
+        // The WebServer thread will handle all data consumption via /api/data
         while (keepRunning) {
-            
-            // if (!engine.isCapturing()) {
-            //     engine.startCapture(); 
-            // }
-            json packetJson = engine.pollData();
-            // // B. Check Validity (using .is_null() from nlohmann library)
-            if (!packetJson.is_null()) {
-                std::string debugStr = packetJson.dump();
-                // Logger::debug("Asterix Packet to JSON: {}", debugStr );
-                // C. Example Logic: Accessing Data
-                // Tshark -T ek structure is usually: { "layers": { "ip": { ... }, "udp": { ... } } }
-                webServer.broadcastPacket(packetJson.dump());
-                
-                if (packetJson.contains("layers")) {
-                    auto layers = packetJson["layers"];
-                    
-                    // Log it just to prove it works
-                    // Logger::info("Packet received!"); 
-                    // std::cout << layers.dump() << std::endl; // Print raw JSON to console
-                }
-                // 2. MARS Processing (New)
-                // std::string cotXml = mars.processPacket(packet);
-                // if (!cotXml.empty()) {
-                //     // 3. Send to TAK (Future UDP Sender)
-                //     // udpSender.send(cotXml);
-                //     Logger::debug("Generated CoT: {}", cotXml);
-                // }
-            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
 
     } catch (const std::exception& e) {
         Logger::error("Critical Exception: {}", e.what());
         return -1;
     }
-    // 5. Cleanup
-    // When loop breaks, 'engine' destructor is called automatically here.
+
+    // 4. Cleanup
     webServer.stop();
     engine.stopCapture();
     Logger::info("TARGEX Server stopped gracefully.");

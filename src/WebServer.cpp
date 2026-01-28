@@ -1,189 +1,107 @@
 #include "WebServer.hpp"
 #include "Logger.hpp"
 #include <filesystem>
-#include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <nlohmann/json.hpp> 
 
 namespace fs = std::filesystem;
 
-std::string trim(const std::string& str) {
-    size_t first = str.find_first_not_of(" \t\r\n");
-    if (std::string::npos == first) return str;
-    size_t last = str.find_last_not_of(" \t\r\n");
-    return str.substr(first, (last - first + 1));
+// --- HELPER: Read File Content ---
+std::string readFile(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) return "";
+    std::stringstream buffer;
+    buffer << f.rdbuf();
+    return buffer.str();
 }
 
-// bridge class to send Crow logs to Targex Logger
-// bridge class to send Crow logs to Targex Logger
-class CrowToTargexLogger : public crow::ILogHandler {
-public:
-    // FIX: Changed 'std::string' to 'const std::string&' to match Crow's interface
-    void log(const std::string& message, crow::LogLevel level) override {
-        
-        // Create a local copy if we need to modify it (stripping newline)
-        std::string cleanMessage = message;
-        if (!cleanMessage.empty() && cleanMessage.back() == '\n') {
-            cleanMessage.pop_back();
-        }
-
-        // Map Crow levels to Targex Logger levels
-        switch (level) {
-            case crow::LogLevel::Debug:
-                Logger::debug("[WEB] {}", cleanMessage); 
-                break;
-            case crow::LogLevel::Info:
-                Logger::info("[WEB] {}", cleanMessage);
-                break;
-            case crow::LogLevel::Warning:
-                Logger::warn("[WEB] {}", cleanMessage);
-                break;
-            case crow::LogLevel::Error:
-            case crow::LogLevel::Critical:
-                Logger::error("[WEB] {}", cleanMessage);
-                break;
-        }
-    }
-};
-
-WebServer::WebServer(AppConfig& config, TargexCore& targexCore, MarsEngine& mars) : m_config(config),m_engine(targexCore),m_mars(mars) {
+WebServer::WebServer(AppConfig& config, TargexCore& targexCore) 
+    : m_config(config), m_engine(targexCore) 
+{
     setupRoutes();
-
-    m_mars.setStatusCallback([this](std::string status) {
-        // We use nlohmann/json to make the packet
-        nlohmann::json j;
-        j["type"] = "ssl_status";
-        j["status"] = status;
-        this->broadcastPacket(j.dump());
-    });
 }
 
-WebServer::~WebServer() {
-    stop(); // Safety net: Ensure we stop before destroying members
+WebServer::~WebServer() { 
+    stop(); 
 }
 
 void WebServer::setupRoutes() {
-    // ---------------------------------------------------------
-    // 1. WEBSOCKET (MOVE THIS TO THE TOP!)
-    // ---------------------------------------------------------
-    CROW_WEBSOCKET_ROUTE(app, "/ws")
-        .onopen([&](crow::websocket::connection& conn) {
-            std::lock_guard<std::mutex> _(m_connectionMutex);
-            m_connections.push_back(&conn);
-            Logger::info("GUI Connected! Total Clients: {}", m_connections.size());
-        })
-        .onclose([&](crow::websocket::connection& conn, const std::string& reason, uint16_t code) {
-            std::lock_guard<std::mutex> _(m_connectionMutex);
-            m_connections.erase(
-                std::remove(m_connections.begin(), m_connections.end(), &conn), 
-                m_connections.end()
-            );
-            Logger::info("GUI Disconnected.");
-        });
-
-    // ---------------------------------------------------------
-    // 2. STATIC FILES
-    // ---------------------------------------------------------
-    CROW_ROUTE(app, "/")([](const crow::request&, crow::response& res){
-        res.set_static_file_info("public/index.html");
-        res.end();
-    });
-
-    // New Route "/log" serves the OLD VIEW (log.html)
-    CROW_ROUTE(app, "/log")([](const crow::request&, crow::response& res){
-        res.set_static_file_info("public/log.html");
-        res.end();
-    });
     
-    // Serve File Manager (Keep as is)
-    CROW_ROUTE(app, "/files")([](const crow::request&, crow::response& res){
-        res.set_static_file_info("public/files.html");
-        res.end();
+    // 1. MOUNT STATIC ASSETS (js, css, images)
+    // This handles /libs/..., /style.css, etc.
+    if (!m_server.set_mount_point("/", "./public")) {
+        Logger::error("Failed to mount ./public directory!");
+    }
+    // Also mount the "output" directory so users can download PCAP files
+    m_server.set_mount_point("/output", "./output");
+
+    // 2. PAGE ROUTES (Manual Mapping)
+    // These fix the "Page not found" error for your menu buttons
+    m_server.Get("/log", [&](const httplib::Request&, httplib::Response& res) {
+        res.set_content(readFile("public/log.html"), "text/html");
     });
 
-    // This is the "greedy" route that was causing the problem
-    CROW_ROUTE(app, "/<string>")
-    ([](std::string path){
-        // Safety check: Don't let it serve "ws" if the top route missed
-        if (path == "ws") return crow::response(404);
+    m_server.Get("/files", [&](const httplib::Request&, httplib::Response& res) {
+        res.set_content(readFile("public/files.html"), "text/html");
+    });
+
+    // 3. API: CONFIG (POST)
+    m_server.Post("/api/config", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            auto x = nlohmann::json::parse(req.body);
+            
+            // Standard Net Config
+            if(x.contains("rx_port")) m_config.rx_port = x["rx_port"].get<int>();
+            if(x.contains("cot_ip")) m_config.cot_ip = x["cot_ip"].get<std::string>(); 
+            if(x.contains("cot_port")) m_config.cot_port = x["cot_port"].get<int>(); 
+            if(x.contains("cot_proto")) m_config.cot_protocol = x["cot_proto"].get<std::string>();
+            if(x.contains("send_sensor_pos")) m_config.send_sensor_pos = x["send_sensor_pos"].get<bool>();
+
+            // SSL Config [NEW]
+            if(x.contains("ssl_client_pass")) m_config.ssl_client_pass = x["ssl_client_pass"].get<std::string>();
+            if(x.contains("ssl_trust_pass")) m_config.ssl_trust_pass = x["ssl_trust_pass"].get<std::string>();
+            
+            // Note: For actual files, we currently store the filename/path string provided by the UI.
+            // A full implementation would require a multipart upload handler to save the binary .p12 files.
+            if(x.contains("ssl_client_cert")) m_config.ssl_client_cert = x["ssl_client_cert"].get<std::string>();
+            if(x.contains("ssl_trust_store")) m_config.ssl_trust_store = x["ssl_trust_store"].get<std::string>();
+
+            Logger::info("Config Updated: RX={} CoT={}:{} (SSL={})", 
+                m_config.rx_port, m_config.cot_ip, m_config.cot_port, (m_config.cot_protocol=="ssl"));
+            
+            res.status = 200;
+        } catch (...) { res.status = 400; }
+    });
+
+    // 4. API: DATA POLLING (GET)
+    m_server.Get("/api/data", [&](const httplib::Request& req, httplib::Response& res) {
         
-        crow::response res;
-        res.set_static_file_info("public/" + path);
-        return res;
-    });
-    //SERVE LIBRARY FILES (leaflet.js, milsymbol.js, css)
-    CROW_ROUTE(app, "/libs/<string>")
-    ([](const crow::request&, crow::response& res, std::string filename){
-        // Prevent directory traversal attacks (simple check)
-        if (filename.find("..") != std::string::npos) {
-            res.code = 403;
-            res.end();
-            return;
-        }
-        res.set_static_file_info("public/libs/" + filename);
-        res.end();
-    });
-
-    // 2. SERVE IMAGES (marker-icon.png, etc.)
-    CROW_ROUTE(app, "/libs/images/<string>")
-    ([](const crow::request&, crow::response& res, std::string filename){
-        if (filename.find("..") != std::string::npos) {
-            res.code = 403;
-            res.end();
-            return;
-        }
-        res.set_static_file_info("public/libs/images/" + filename);
-        res.end();
-    });
-
-    // ---------------------------------------------------------
-    // 3. API ENDPOINTS
-    // ---------------------------------------------------------
-    CROW_ROUTE(app, "/api/settings")([this](){
-        // ... (Keep existing code) ...
-        crow::json::wvalue x;
-        x["site_name"] = m_config.site_name;
-        x["rx_port"] = m_config.rx_port;
-        return x;
-    });
-
-    // API: STATUS (For Start/Stop)
-    CROW_ROUTE(app, "/api/capture/status")([&](){
-        crow::json::wvalue x;
-        x["running"] = m_engine.isCapturing();
-        return x;
-    });
-
-    // API: CONTROL (Start/Stop)
-    CROW_ROUTE(app, "/api/capture/control").methods("POST"_method)
-    ([&](const crow::request& req){
-        auto x = crow::json::load(req.body);
+        nlohmann::json packetArray = nlohmann::json::array();
         
-        if (!x) {
-            Logger::error("API Error: Failed to parse JSON body");
-            return crow::response(400);
+        // Loop to drain the buffer (up to 50 packets per HTTP request)
+        for(int i=0; i<50; i++) {
+            nlohmann::json packet = m_engine.pollData();
+            if (packet.is_null()) break; // Stop if no more data
+            packetArray.push_back(packet);
         }
 
-        bool turnOn = x["action"].b();
-        Logger::info("API Request Received: Set Capture to {}", turnOn ? "ON" : "OFF");
-
-        if (turnOn) {
-            m_engine.startCapture();
+        // Return Array (or empty array)
+        if (!packetArray.empty()) {
+            res.set_content(packetArray.dump(), "application/json");
         } else {
-            m_engine.stopCapture();
+            res.set_content("[]", "application/json");
         }
-
-        return crow::response(200);
     });
 
-    // API: FILE LIST (THE ONLY ONE YOU NEED)
-    CROW_ROUTE(app, "/api/files")([&](){
-        std::vector<crow::json::wvalue> fileList;
+    // 5. API: FILE LIST (GET) - For File Manager
+    m_server.Get("/api/files", [&](const httplib::Request& req, httplib::Response& res) {
+        std::vector<nlohmann::json> fileList;
         std::string path = m_config.destination;
         
-        // Find newest file to lock it
+        // Find newest file to mark it as "Locked" (Active Recording)
         fs::path newestFile;
         auto newestTime = fs::file_time_type::min();
-
-        // Pass 1: Find newest
         if (fs::exists(path)) {
             for (const auto & entry : fs::directory_iterator(path)) {
                 if(entry.path().extension() == ".pcapng") {
@@ -195,366 +113,75 @@ void WebServer::setupRoutes() {
             }
         }
 
-        // Pass 2: Build JSON
         int id = 0;
         if (fs::exists(path)) {
             for (const auto & entry : fs::directory_iterator(path)) {
                 if(entry.path().extension() == ".pcapng") {
-                    crow::json::wvalue f;
+                    nlohmann::json f;
                     f["id"] = id++;
                     f["name"] = entry.path().filename().string();
                     f["size"] = entry.file_size();
                     
-                    // LOCK logic
+                    // Logic: If capturing, the newest file is locked
+                    // Note: We need to expose isCapturing() in TargexCore to be 100% accurate,
+                    // but checking if it matches the newest file is a good proxy.
                     bool isNewest = (entry.path() == newestFile);
-                    f["locked"] = (m_engine.isCapturing() && isNewest);
+                    f["locked"] = isNewest; 
                     
                     fileList.push_back(f);
                 }
             }
         }
-        crow::json::wvalue result;
-        result["files"] = std::move(fileList);
-        return result;
+        
+        nlohmann::json result;
+        result["files"] = fileList;
+        res.set_content(result.dump(), "application/json");
     });
 
-    //  API: MERGE
-    CROW_ROUTE(app, "/api/merge").methods("POST"_method)
-    ([this](const crow::request& req){
-        auto x = crow::json::load(req.body);
-        if(!x) return crow::response(400);
+    // 6. API: MERGE/CONVERT (POST) - For File Manager
+    m_server.Post("/api/merge", [&](const httplib::Request& req, httplib::Response& res) {
+        try {
+            auto x = nlohmann::json::parse(req.body);
+            std::vector<std::string> files;
+            for (const auto& item : x["files"]) files.push_back(item.get<std::string>());
+            std::string format = x["format"].get<std::string>();
 
-        std::vector<std::string> files;
-        for (const auto& item : x["files"]) files.push_back(item.s());
-        
-        std::string format = x["format"].s(); // "csv" or "json"
-        
-        // --- 1. MERGE (Blocking) ---
-        // We merged strict filtering here in previous steps, ensure headers are correct as per your last update
-        std::string mergeCmd = "mergecap -w public/temp_merged.pcapng";
-        for(const auto& f : files) mergeCmd += " \"output/" + f + "\"";
-        
-        if (system(mergeCmd.c_str()) != 0) {
-            return crow::response(500, "Merge failed");
-        }
+            // A. Merge
+            std::string mergeCmd = "mergecap -w public/temp_merged.pcapng";
+            for(const auto& f : files) mergeCmd += " \"output/" + f + "\"";
+            if (system(mergeCmd.c_str()) != 0) { res.status = 500; return; }
 
-        // --- 2. CONVERT (Blocking) ---
-        std::string finalFile = "public/download." + format;
-        std::string convertCmd;
+            // B. Convert
+            std::string finalFile = "public/download." + format;
+            std::string convertCmd;
+            if (format == "json") {
+                convertCmd = "tshark -r public/temp_merged.pcapng -T ek > " + finalFile;
+            } else {
+                // Simplified CSV export for reliability
+                convertCmd = "tshark -r public/temp_merged.pcapng -T fields -E separator=, -E header=y "
+                             "-e ip.src -e ip.dst -e udp.dstport -e asterix "
+                             "> " + finalFile;
+            }
+            if (system(convertCmd.c_str()) != 0) { res.status = 500; return; }
 
-        if (format == "json") {
-             convertCmd = "tshark -r public/temp_merged.pcapng -T ek > " + finalFile;
-        } else {
-                // Tshark -> CSV (ALL FIELDS)
-                
-                // 1. Define the CSV Header (One massive string)
-                std::string header = "echo \"SRC_IP,DST_IP,DST_PORT,"
-                                     // --- CAT 34 HEADERS ---
-                                     "C34_MsgType,C34_DataSourceID,C34_SectorNum,C34_TimeOfDay,C34_AntRotationSpeed,"
-                                     "C34_Sys_NOGO,C34_Sys_RDPC,C34_Sys_RDPR,C34_Sys_OVL_RDP,C34_Sys_OVL_XMT,C34_Sys_MSC,C34_Sys_TSV,"
-                                     "C34_PSR_ANT,C34_PSR_CHAB,C34_PSR_OVL,C34_PSR_MSC,"
-                                     "C34_SSR_ANT,C34_SSR_CHAB,C34_SSR_OVL,C34_SSR_MSC,"
-                                     "C34_MDS_ANT,C34_MDS_CHAB,C34_MDS_OVL_SUR,C34_MDS_MSC,C34_MDS_SCF,C34_MDS_DLF,C34_MDS_OVL_SCF,C34_MDS_OVL_DLF,"
-                                     "C34_Proc_RED_RDP,C34_Proc_RED_XMT,"
-                                     "C34_ProcPSR_POL,C34_ProcPSR_RED_RAD,C34_ProcPSR_STC,"
-                                     "C34_ProcSSR_RED_RAD,C34_ProcMDS_RED_RAD,C34_ProcMDS_CLU,"
-                                     "C34_MsgCnt_TYP,C34_MsgCnt_VAL,"
-                                     "C34_Err_Range,C34_Err_Azimuth,"
-                                     "C34_Win_RhoStart,C34_Win_RhoEnd,C34_Win_ThetaStart,C34_Win_ThetaEnd,"
-                                     "C34_DataFilter,C34_Height,C34_Lat,C34_Lon,"
-                                     // --- CAT 48 HEADERS ---
-                                     "C48_DataSourceID,C48_TimeOfDay,C48_TrackNum,C48_AcftID,"
-                                     "C48_Typ,C48_Sim,C48_RDP,C48_SPI,C48_RAB,C48_TST,C48_ERR,C48_XPP,C48_ME,C48_MI,C48_FOE,"
-                                     "C48_Polar_Rho,C48_Polar_Theta,C48_Cart_X,C48_Cart_Y,"
-                                     "C48_Mode2_V,C48_Mode2_G,C48_Mode2_L,C48_Mode2_Squawk,"
-                                     "C48_Mode1_V,C48_Mode1_G,C48_Mode1_L,C48_Mode1_Code,"
-                                     "C48_Mode2_Conf,"
-                                     "C48_Mode3A_V,C48_Mode3A_G,C48_Mode3A_L,C48_Mode3A_Squawk,"
-                                     "C48_Mode3A_Conf,"
-                                     "C48_FL_V,C48_FL_G,C48_FlightLevel,"
-                                     "C48_ModeC_V,C48_ModeC_G,C48_ModeC_Code,"
-                                     "C48_Height3D,"
-                                     "C48_RadDopp_D,C48_RadDopp_CAL,C48_RadDopp_DOP,C48_RadDopp_AMB,C48_RadDopp_FRQ,"
-                                     "C48_Plot_SRL,C48_Plot_SRR,C48_Plot_SAM,C48_Plot_PRL,C48_Plot_PAM,C48_Plot_RPD,C48_Plot_APD,"
-                                     "C48_TrkStat_CNF,C48_TrkStat_RAD,C48_TrkStat_DOU,C48_TrkStat_MAH,C48_TrkStat_CDM,C48_TrkStat_TRE,C48_TrkStat_GHO,C48_TrkStat_SUP,C48_TrkStat_TCC,"
-                                     "C48_Calc_GS,C48_Calc_HDG,"
-                                     "C48_Quality_X,C48_Quality_Y,C48_Quality_V,C48_Quality_H,"
-                                     "C48_AcftAddr,"
-                                     "C48_Com_COM,C48_Com_STAT,C48_Com_SI,C48_Com_MSSC,C48_Com_ARC,C48_Com_AIC,C48_Com_B1A,C48_Com_B1B"
-                                     "\" > " + finalFile;
+            // C. Reply
+            nlohmann::json reply;
+            reply["status"] = "ok";
+            reply["url"] = "/download." + format;
+            res.set_content(reply.dump(), "application/json");
 
-                system(header.c_str());
-
-                // 2. Define the Tshark Command (Using underscore names from grep)
-                convertCmd = "tshark -r public/temp_merged.pcapng -T fields -E separator=, -E header=n "
-                             "-e ip.src -e ip.dst -e udp.dstport "
-                             
-                             // --- CAT 34 FIELDS ---
-                             "-e asterix.034_000_MT "
-                             "-e asterix.034_010 "
-                             "-e asterix.034_020_SN "
-                             "-e asterix.034_030 "
-                             "-e asterix.034_041_ARS "
-                             // 050 System Config
-                             "-e asterix.034_050_01_NOGO -e asterix.034_050_01_RDPC -e asterix.034_050_01_RDPR -e asterix.034_050_01_OVL_RDP "
-                             "-e asterix.034_050_01_OVL_XMT -e asterix.034_050_01_MSC -e asterix.034_050_01_TSV "
-                             "-e asterix.034_050_02_ANT -e asterix.034_050_02_CHAB -e asterix.034_050_02_OVL -e asterix.034_050_02_MSC "
-                             "-e asterix.034_050_03_ANT -e asterix.034_050_03_CHAB -e asterix.034_050_03_OVL -e asterix.034_050_03_MSC "
-                             "-e asterix.034_050_04_ANT -e asterix.034_050_04_CHAB -e asterix.034_050_04_OVL_SUR -e asterix.034_050_04_MSC "
-                             "-e asterix.034_050_04_SCF -e asterix.034_050_04_DLF -e asterix.034_050_04_OVL_SCF -e asterix.034_050_04_OVL_DLF "
-                             // 060 Processing Mode
-                             "-e asterix.034_060_01_RED_RDP -e asterix.034_060_01_RED_XMT "
-                             "-e asterix.034_060_02_POL -e asterix.034_060_02_RED_RAD -e asterix.034_060_02_STC "
-                             "-e asterix.034_060_03_RED_RAD -e asterix.034_060_04_RED_RAD -e asterix.034_060_04_CLU "
-                             // Counts & Errors
-                             "-e asterix.034_070_TYP -e asterix.034_070_COUNTER "
-                             "-e asterix.034_090_RE -e asterix.034_090_AE "
-                             "-e asterix.034_100_RHOS -e asterix.034_100_RHOE -e asterix.034_100_THETAS -e asterix.034_100_THETAE "
-                             "-e asterix.034_110_TYP "
-                             "-e asterix.034_120_H -e asterix.034_120_LAT -e asterix.034_120_LON "
-
-                             // --- CAT 48 FIELDS ---
-                             "-e asterix.048_010 "  // DataSource
-                             "-e asterix.048_140 "  // Time
-                             "-e asterix.048_161_TN " // Track Num
-                             "-e asterix.048_240 "  // Acft ID
-                             // 020 Target Report
-                             "-e asterix.048_020_TYP -e asterix.048_020_SIM -e asterix.048_020_RDP -e asterix.048_020_SPI "
-                             "-e asterix.048_020_RAB -e asterix.048_020_TST -e asterix.048_020_ERR -e asterix.048_020_XPP "
-                             "-e asterix.048_020_ME -e asterix.048_020_MI -e asterix.048_020_FOE "
-                             // Position
-                             "-e asterix.048_040_RHO -e asterix.048_040_THETA "
-                             "-e asterix.048_042_X -e asterix.048_042_Y "
-                             // Mode 2
-                             "-e asterix.048_050_V -e asterix.048_050_G -e asterix.048_050_L -e asterix.048_050_SQUAWK "
-                             // Mode 1
-                             "-e asterix.048_055_V -e asterix.048_055_G -e asterix.048_055_L -e asterix.048_055_CODE "
-                             // Mode 2 Conf (Summarized to one hex field to save space)
-                             "-e asterix.048_060 " 
-                             // Mode 3A
-                             "-e asterix.048_070_V -e asterix.048_070_G -e asterix.048_070_L -e asterix.048_070_SQUAWK "
-                             // Mode 3A Conf (Summarized)
-                             "-e asterix.048_080 "
-                             // Flight Level
-                             "-e asterix.048_090_V -e asterix.048_090_G -e asterix.048_090_FL "
-                             // Mode C
-                             "-e asterix.048_100_V -e asterix.048_100_G -e asterix.048_100 " // Extracting base for code
-                             "-e asterix.048_110_3DHEIGHT "
-                             // Radial Doppler (120)
-                             "-e asterix.048_120_01_D -e asterix.048_120_01_CAL -e asterix.048_120_02_DOP -e asterix.048_120_02_AMB -e asterix.048_120_02_FRQ "
-                             // Plot Characteristics (130)
-                             "-e asterix.048_130_01_SRL -e asterix.048_130_02_SRR -e asterix.048_130_03_SAM -e asterix.048_130_04_PRL "
-                             "-e asterix.048_130_05_PAM -e asterix.048_130_06_RPD -e asterix.048_130_07_APD "
-                             // Track Status (170)
-                             "-e asterix.048_170_CNF -e asterix.048_170_RAD -e asterix.048_170_DOU -e asterix.048_170_MAH -e asterix.048_170_CDM "
-                             "-e asterix.048_170_TRE -e asterix.048_170_GHO -e asterix.048_170_SUP -e asterix.048_170_TCC "
-                             // Calculated (200)
-                             "-e asterix.048_200_GS -e asterix.048_200_HDG "
-                             // Quality (210)
-                             "-e asterix.048_210_X -e asterix.048_210_Y -e asterix.048_210_V -e asterix.048_210_H "
-                             "-e asterix.048_220 " // Acft Addr
-                             // Comms (230)
-                             "-e asterix.048_230_COM -e asterix.048_230_STAT -e asterix.048_230_SI -e asterix.048_230_MSSC -e asterix.048_230_ARC "
-                             "-e asterix.048_230_AIC -e asterix.048_230_B1A -e asterix.048_230_B1B "
-                             
-                             ">> " + finalFile;
-        }
-            if (system(convertCmd.c_str()) != 0) {
-             return crow::response(500, "Conversion failed");
-        }
-
-        // --- 3. RESPOND ---
-        // We return JSON telling the frontend the file is ready.
-        crow::json::wvalue res;
-        res["status"] = "ok";
-        res["url"] = "/download." + format; 
-        return crow::response(res);
-    });
-
-    CROW_ROUTE(app, "/api/config")
-    .methods("GET"_method, "POST"_method)
-    ([this](const crow::request& req) {
-        auto x = crow::json::load(req.body);
-        if (!x) return crow::response(400);
-
-        CoTConfig cfg;
-        cfg.ip = x["cot_ip"].s();
-        cfg.port = x["cot_port"].i();
-        cfg.protocol = x["cot_proto"].s();
-
-        // Update Mars (triggers connection if not SSL)
-        m_mars.updateConfig(cfg);
-        
-        return crow::response(200);
-        // if (req.method == "GET"_method) {
-        //     crow::json::wvalue x;
-        //     x["rx_port"] = m_config.rx_port;
-        //     // You will need to add these fields to your AppConfig struct later
-        //     x["cot_ip"] = "239.2.3.1"; // Default Multicast
-        //     x["cot_port"] = 6969;
-        //     return crow::response(x);
-        // }
-        // else {
-        //     auto x = crow::json::load(req.body);
-        //     if (!x) return crow::response(400);
-            
-        //     // Update Config (In a real app, save to config.json here)
-        //     m_config.rx_port = x["rx_port"].i();
-        //     Logger::info("Config Updated: RX Port {}", m_config.rx_port);
-            
-        //     return crow::response(200);
-        // }
-    });
-
-    CROW_ROUTE(app, "/api/upload_ssl")
-    .methods("POST"_method)
-    ([this](const crow::request& req) {
-        // 1. Get Boundary
-        std::string contentType = req.get_header_value("Content-Type");
-        size_t boundaryPos = contentType.find("boundary=");
-        if (boundaryPos == std::string::npos) return crow::response(400, "Missing boundary");
-        std::string boundary = "--" + contentType.substr(boundaryPos + 9);
-
-        // 2. Parse Fields
-        std::string clientP12 = getPartValue(req.body, boundary, "client_p12");
-        std::string clientPwd = getPartValue(req.body, boundary, "client_pwd");
-        std::string trustP12 = getPartValue(req.body, boundary, "trust_p12");
-        std::string trustPwd = getPartValue(req.body, boundary, "trust_pwd");
-
-        // --- FIX: TRIM PASSWORDS ---
-        clientPwd = trim(clientPwd);
-        trustPwd = trim(trustPwd);
-
-        // --- DEBUG LOGGING ---
-        Logger::info("SSL: Received P12. ClientPWD Length: {}, TrustPWD Length: {}", 
-                     clientPwd.length(), trustPwd.length());
-        // Uncomment this only if you need to see the raw password in logs:
-        // std::cout << "DEBUG PASSWORD: [" << clientPwd << "]" << std::endl;
-
-        if (clientP12.empty() || trustP12.empty()) {
-            Logger::error("Upload Failed: Missing P12 files");
-            return crow::response(400, "Missing files");
-        }
-
-        // 3. Save Files to Disk
-        // We save them to the 'resources' folder
-        std::string clientPath = "resources/client_identity.p12";
-        std::string trustPath = "resources/trust_store.p12";
-
-        std::ofstream cFile(clientPath, std::ios::binary);
-        cFile << clientP12;
-        cFile.close();
-
-        std::ofstream tFile(trustPath, std::ios::binary);
-        tFile << trustP12;
-        tFile.close();
-
-        Logger::info("SSL: Certificates saved to resources/");
-
-        // 4. Update MarsEngine Configuration
-        // We reuse the current IP/Port from previous config or defaults
-        // Note: Ideally we store the current IP/Port in MarsEngine to retrieve, 
-        // but for now we assume the user set them in the UI inputs which triggered /api/config earlier.
-        
-        CoTConfig sslConfig;
-        sslConfig.protocol = "ssl";
-        sslConfig.clientP12Path = clientPath;
-        sslConfig.clientPwd = clientPwd;
-        sslConfig.trustP12Path = trustPath;
-        sslConfig.trustPwd = trustPwd;
-        
-        // We need the IP/Port. Since this request is multipart, we didn't send them easily.
-        // HACK: We will let MarsEngine keep its existing IP/Port if we don't supply them,
-        // OR we can parse them if we added them to formData.
-        // For robustness, MarsEngine::updateConfig should probably merge with existing if fields are missing.
-        // Let's assume MarsEngine handles the merge or we force a re-connect.
-        // (Actually, better approach: Use the /api/config values. 
-        //  The WebUI calls /api/config FIRST, setting IP/Port. 
-        //  Then calls /api/upload_ssl. So Mars has the IP/Port stored.)
-        
-        m_mars.updateConfig(sslConfig); 
-
-        return crow::response(200);
+        } catch (...) { res.status = 400; }
     });
 }
-
-
 
 void WebServer::start() {
     Logger::info("Web Server starting on Port {}...", m_config.rx_port_web);
-
-    // 1. SET CUSTOM LOGGER
-    // We create a static instance so it lives for the lifetime of the app
-    static CrowToTargexLogger customLogger;
-    crow::logger::setHandler(&customLogger);
-
-    // 2. SET LOG LEVEL
-    // If you want to see the "Request: GET..." logs in your file, set this to INFO.
-    // If you only want Warnings/Errors in the file, set to WARNING.
-    app.loglevel(crow::LogLevel::Info); 
-
-    // 3. RUN SERVER
-    m_serverThread = std::thread([this](){
-        app.port(m_config.rx_port_web).multithreaded().run();
+    m_serverThread = std::thread([this]() {
+        m_server.listen("0.0.0.0", m_config.rx_port_web);
     });
 }
 
-std::string WebServer::getPartValue(const std::string& body, const std::string& boundary, const std::string& partName) {
-    std::string searchKey = "name=\"" + partName + "\"";
-    size_t partStart = body.find(searchKey);
-    if (partStart == std::string::npos) return "";
-
-    // Find start of data (double CRLF after headers)
-    size_t dataStart = body.find("\r\n\r\n", partStart);
-    if (dataStart == std::string::npos) return "";
-    dataStart += 4; // Skip the \r\n\r\n
-
-    // Find end of data (next boundary)
-    size_t dataEnd = body.find(boundary, dataStart);
-    if (dataEnd == std::string::npos) return "";
-
-    // Remove trailing \r\n
-    if (dataEnd >= 2 && body[dataEnd-2] == '\r' && body[dataEnd-1] == '\n') {
-        dataEnd -= 2;
-    }
-
-    return body.substr(dataStart, dataEnd - dataStart);
-}
-
-void WebServer::broadcastPacket(const std::string& jsonString) {
-    // LOCK THE THREAD
-    std::lock_guard<std::mutex> _(m_connectionMutex);
-
-    // 1. Log the "Guest List" size
-    if (m_connections.empty()) {
-        // Use static so we don't spam the log 100 times a second
-        static int noClientCounter = 0;
-        if (noClientCounter++ % 200 == 0) { // Log every ~2 seconds
-            Logger::warn("Broadcast failed: Connection list is EMPTY. (Browser is connected but not registered?)");
-        }
-    } else {
-        // Log that we are sending
-        static int successCounter = 0;
-        if (successCounter++ % 200 == 0) {
-            Logger::info("Broadcasting packet to {} client(s). Data len: {}", m_connections.size(), jsonString.length());
-        }
-    }
-
-    // 2. Send the data
-    for (auto* conn : m_connections) {
-        conn->send_text(jsonString);
-    }
-}
-
-
-
 void WebServer::stop() {
-    // 1. Tell Crow to stop accepting new connections
-    // This breaks the app.run() loop inside the thread.
-    app.stop(); 
-    
-    // 2. Wait for the thread to actually finish (Join)
-    if (m_serverThread.joinable()) {
-        m_serverThread.join();
-    }
+    if (m_server.is_running()) m_server.stop();
+    if (m_serverThread.joinable()) m_serverThread.join();
 }

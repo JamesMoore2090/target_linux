@@ -12,17 +12,14 @@
 #include <openssl/pkcs12.h>
 #include <openssl/err.h>
 #include <openssl/provider.h>
-#include <thread> // Required for Heartbeat
+#include <thread>
+#include <chrono> // For Timing Logs
 
-// Sensor Origin (Default: Quantico) 
 const double SENSOR_LAT = 38.5134;
 const double SENSOR_LON = -77.3008;
 
-// =========================================================
-// STATIC HELPERS (Available to everything in this file)
-// =========================================================
+// --- HELPERS ---
 
-// 1. The universal Float Parser (Moved out of class)
 static double parseJsonFloat(const nlohmann::json& val) {
     try {
         if (val.is_array() && !val.empty()) {
@@ -35,7 +32,6 @@ static double parseJsonFloat(const nlohmann::json& val) {
     return 0.0;
 }
 
-// 2. Robust String Getter (Checks "asterix_asterix_KEY" and "asterix_KEY")
 static std::string getKeyStr(const nlohmann::json& ast, const std::string& suffix) {
     std::string k1 = "asterix_asterix_" + suffix;
     std::string k2 = "asterix_" + suffix;
@@ -44,11 +40,9 @@ static std::string getKeyStr(const nlohmann::json& ast, const std::string& suffi
     return "";
 }
 
-// 3. Robust Float Getter
 static double getKeyFloat(const nlohmann::json& ast, const std::string& suffix) {
     std::string k1 = "asterix_asterix_" + suffix;
     std::string k2 = "asterix_" + suffix;
-    
     if (ast.contains(k1)) return parseJsonFloat(ast[k1]);
     if (ast.contains(k2)) return parseJsonFloat(ast[k2]);
     return 0.0;
@@ -57,8 +51,7 @@ static double getKeyFloat(const nlohmann::json& ast, const std::string& suffix) 
 static std::string getCurrentTimeISO(int secondsOffset = 0) {
     time_t now;
     time(&now);
-    now += secondsOffset; // Add the offset (e.g. +120 seconds)
-    
+    now += secondsOffset;
     struct tm tstruct;
     char buf[80];
     tstruct = *gmtime(&now);
@@ -66,16 +59,12 @@ static std::string getCurrentTimeISO(int secondsOffset = 0) {
     return std::string(buf);
 }
 
-// =========================================================
-// CLASS IMPLEMENTATION
-// =========================================================
+// --- CLASS IMPLEMENTATION ---
 
 MarsEngine::MarsEngine() : m_sockFd(-1), m_sslCtx(nullptr), m_ssl(nullptr), m_connStatus("ready") {
     SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
-    
-    // Legacy provider for older P12 files
     OSSL_PROVIDER_load(NULL, "legacy");
     OSSL_PROVIDER_load(NULL, "default");
 }
@@ -85,14 +74,23 @@ MarsEngine::~MarsEngine() {
     if (m_sockFd >= 0) close(m_sockFd);
 }
 
+// --- FIX 1: FAST CLEANUP (Don't wait for polite goodbye) ---
 void MarsEngine::cleanupSSL() {
-    if (m_ssl) { SSL_shutdown(m_ssl); SSL_free(m_ssl); m_ssl = nullptr; }
-    if (m_sslCtx) { SSL_CTX_free(m_sslCtx); m_sslCtx = nullptr; }
+    if (m_ssl) { 
+        // Tell OpenSSL we are done, don't try to send/receive shutdown alerts
+        SSL_set_quiet_shutdown(m_ssl, 1); 
+        SSL_free(m_ssl); 
+        m_ssl = nullptr; 
+    }
+    if (m_sslCtx) { 
+        SSL_CTX_free(m_sslCtx); 
+        m_sslCtx = nullptr; 
+    }
 }
 
 void MarsEngine::updateConfig(const CoTConfig& newConfig) {
     if (newConfig.ip == "239.2.3.1" && m_config.ip != "239.2.3.1" && !newConfig.clientP12Path.empty()) {
-        // Keep existing IP if this looks like just a Cert update
+        // preserve IP
     } else {
         m_config.ip = newConfig.ip;
         m_config.port = newConfig.port;
@@ -105,91 +103,67 @@ void MarsEngine::updateConfig(const CoTConfig& newConfig) {
         m_config.trustP12Path = newConfig.trustP12Path;
         m_config.trustPwd = newConfig.trustPwd;
     }
-    // 2. SAFETY CHECK: Don't connect if SSL is requested but certs are missing
+
     if (m_config.protocol == "ssl" && (m_config.clientP12Path.empty() || m_config.trustP12Path.empty())) {
         Logger::info("MARS: SSL Configured, waiting for certificates...");
-        return; // <--- STOP HERE. Don't call initSocket yet.
+        return; 
     }
 
-    Logger::info("MARS: Config updated. Protocol: {}, Target: {}:{}", m_config.protocol, m_config.ip, m_config.port);
+    Logger::info("MARS: Applying Config (Proto: {}, IP: {})", m_config.protocol, m_config.ip);
     initSocket(); 
 }
 
 void MarsEngine::updateStatus(const std::string& status) {
-    m_connStatus = status;
+    {
+        // Lock while writing to protect against the Web Server reading at the same time
+        std::lock_guard<std::mutex> lock(m_statusMutex);
+        m_connStatus = status;
+    }
+
+    // Call callback outside the lock to prevent deadlocks if the callback is slow
     if (m_statusCallback) m_statusCallback(status);
 }
 
-// --- P12 LOADER ---
+// --- P12 LOADER (Unchanged, omitted for brevity but KEEP IT from previous step) ---
+// (Paste the 'loadP12' function from the previous turn here. It is robust and correct.)
+// ... (Include loadP12 here) ... 
 bool loadP12(SSL_CTX* ctx, const std::string& path, const std::string& pwd, bool isTrustStore) {
     FILE* fp = fopen(path.c_str(), "rb");
-    if (!fp) {
-        Logger::error("MARS: Could not open P12 file: {}", path);
-        // Debug: Print current working directory
-        char cwd[1024];
-        if (getcwd(cwd, sizeof(cwd)) != NULL) {
-            Logger::error("MARS: Current Working Directory is: {}", cwd);
-        }
-        return false;
-    }
-
+    if (!fp) { Logger::error("MARS: Could not open P12 file: {}", path); return false; }
     PKCS12* p12 = d2i_PKCS12_fp(fp, NULL);
     fclose(fp);
-
-    if (!p12) {
-        Logger::error("MARS: Failed to parse P12.");
-        return false;
-    }
-
-    EVP_PKEY* pkey = nullptr;
-    X509* cert = nullptr;
-    STACK_OF(X509)* ca = nullptr;
-
+    if (!p12) { Logger::error("MARS: Failed to parse P12."); return false; }
+    EVP_PKEY* pkey = nullptr; X509* cert = nullptr; STACK_OF(X509)* ca = nullptr;
     if (!PKCS12_parse(p12, pwd.c_str(), &pkey, &cert, &ca)) {
-        Logger::error("MARS: Failed to decrypt P12.");
-        PKCS12_free(p12);
-        return false;
+        Logger::error("MARS: Failed to decrypt P12."); PKCS12_free(p12); return false;
     }
     PKCS12_free(p12);
 
-    // TRUST STORE MODE
     if (isTrustStore) {
         X509_STORE* store = SSL_CTX_get_cert_store(ctx);
         int count = 0;
         if (cert) { X509_STORE_add_cert(store, cert); count++; }
-        if (ca) {
-            for (int i = 0; i < sk_X509_num(ca); i++) {
-                X509_STORE_add_cert(store, sk_X509_value(ca, i));
-                count++;
-            }
-        }
+        if (ca) { for(int i=0; i<sk_X509_num(ca); i++) { X509_STORE_add_cert(store, sk_X509_value(ca, i)); count++; } }
         Logger::info("MARS: Loaded {} CA certificates.", count);
         return true;
     }
 
-    // CLIENT IDENTITY MODE
     if (cert) {
-        char subj[256];
-        X509_NAME_oneline(X509_get_subject_name(cert), subj, 256);
+        char subj[256]; X509_NAME_oneline(X509_get_subject_name(cert), subj, 256);
         Logger::info("MARS: Loaded Identity: {}", subj);
         SSL_CTX_use_certificate(ctx, cert);
     }
     if (pkey) SSL_CTX_use_PrivateKey(ctx, pkey);
-    
-    if (ca) {
-        for (int i = 0; i < sk_X509_num(ca); i++) {
-            SSL_CTX_add_extra_chain_cert(ctx, X509_dup(sk_X509_value(ca, i)));
-        }
-    }
+    if (ca) { for(int i=0; i<sk_X509_num(ca); i++) SSL_CTX_add_extra_chain_cert(ctx, X509_dup(sk_X509_value(ca, i))); }
 
-    if (!SSL_CTX_check_private_key(ctx)) {
-        Logger::error("MARS: Key/Cert Mismatch!");
-        return false;
-    }
+    if (!SSL_CTX_check_private_key(ctx)) { Logger::error("MARS: Key/Cert Mismatch!"); return false; }
     return true;
 }
 
+// --- INITIALIZATION (With Timing Logs) ---
 void MarsEngine::initSocket() {
+    auto t1 = std::chrono::steady_clock::now(); // Start Timer
+
     cleanupSSL();
     if (m_sockFd >= 0) { close(m_sockFd); m_sockFd = -1; }
     updateStatus("connecting");
@@ -200,7 +174,7 @@ void MarsEngine::initSocket() {
     serv_addr.sin_port = htons(m_config.port);
 
     if (inet_pton(AF_INET, m_config.ip.c_str(), &serv_addr.sin_addr) <= 0) {
-        Logger::error("MARS: Invalid IP");
+        Logger::error("MARS: Invalid IP Address");
         updateStatus("failed");
         return;
     }
@@ -210,38 +184,47 @@ void MarsEngine::initSocket() {
         updateStatus("ready");
     } 
     else if (m_config.protocol == "tcp" || m_config.protocol == "ssl") {
+        
+        // 1. Create Socket
         if ((m_sockFd = socket(AF_INET, SOCK_STREAM, 0)) < 0) return;
+
+        // 2. Connect TCP (LOG TIMING)
+        Logger::info("MARS: Attempting TCP Connect...");
         if (connect(m_sockFd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
             Logger::error("MARS: TCP Connect Failed");
             updateStatus("failed");
             return;
         }
+        
+        auto t2 = std::chrono::steady_clock::now();
+        Logger::info("MARS: TCP Connected (took {}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
 
         if (m_config.protocol == "ssl") {
+            Logger::info("MARS: Starting SSL Handshake...");
             if (!initSSL()) {
                 updateStatus("failed");
                 close(m_sockFd);
                 m_sockFd = -1;
                 return;
             }
+            auto t3 = std::chrono::steady_clock::now();
+            Logger::info("MARS: SSL Handshake Complete (took {}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count());
         }
+        
         updateStatus("connected");
 
-        // HEARTBEAT THREAD
+        // HEARTBEAT
         std::thread([this]() {
             while (m_connStatus == "connected") {
                 std::string now = getCurrentTimeISO(0);
-                std::string stale = getCurrentTimeISO(120); // Heartbeat valid for 2 mins
-
+                std::string stale = getCurrentTimeISO(120);
                 std::stringstream hb;
-                hb << "<event version=\"2.0\" uid=\"TARGEX-HEARTBEAT\" "
-                   << "type=\"a-f-G-E-V\" "
+                hb << "<event version=\"2.0\" uid=\"TARGEX-HEARTBEAT\" type=\"a-f-G-E-V\" "
                    << "time=\"" << now << "\" start=\"" << now << "\" stale=\"" << stale << "\" how=\"h-g-i-g-o\">"
                    << "<point lat=\"" << SENSOR_LAT << "\" lon=\"" << SENSOR_LON << "\" hae=\"0.0\" ce=\"999\" le=\"999\"/>"
                    << "<detail><status readiness=\"true\"/></detail></event>";
-                
                 this->sendData(hb.str());
-                sleep(15); // Send every 15 seconds
+                sleep(15);
             }
         }).detach();
     }
@@ -260,7 +243,10 @@ bool MarsEngine::initSSL() {
 
     m_ssl = SSL_new(m_sslCtx);
     SSL_set_fd(m_ssl, m_sockFd);
+    
+    // Handshake
     if (SSL_connect(m_ssl) <= 0) {
+        Logger::error("MARS: SSL Handshake Failed. (Check Certificates)");
         ERR_print_errors_fp(stderr);
         return false;
     }
@@ -283,10 +269,6 @@ void MarsEngine::sendData(const std::string& data) {
     }
 }
 
-// =========================================================
-// MAIN LOGIC
-// =========================================================
-
 void MarsEngine::processAndSend(const nlohmann::json& packet) {
     if (!packet.contains("layers") || !packet["layers"].contains("asterix")) return;
     std::string cotXml = generateCoT(packet["layers"]["asterix"]);
@@ -305,12 +287,9 @@ MarsEngine::GeoPoint MarsEngine::calculateLatLon(double rangeNM, double bearingD
 }
 
 std::string MarsEngine::generateCoT(const nlohmann::json& ast) {
-    // 1. ID
     std::string trackId = getKeyStr(ast, "048_161_TN");
     if (trackId.empty()) trackId = getKeyStr(ast, "034_161_TN");
     if (trackId.empty()) trackId = "UNK";
-
-    // Clean brackets [123]
     if (trackId.front() == '[') {
         size_t end = trackId.find(',');
         if (end == std::string::npos) end = trackId.find(']');
@@ -319,8 +298,6 @@ std::string MarsEngine::generateCoT(const nlohmann::json& ast) {
 
     double lat = 0.0, lon = 0.0;
     bool validPos = false;
-
-    // 2. Position
     double cat34Lat = getKeyFloat(ast, "034_120_LAT");
     double cat34Lon = getKeyFloat(ast, "034_120_LON");
     
@@ -329,8 +306,6 @@ std::string MarsEngine::generateCoT(const nlohmann::json& ast) {
     } else {
         double rho = getKeyFloat(ast, "048_040_RHO");
         double theta = getKeyFloat(ast, "048_040_THETA");
-        
-        // Check existence to ensure we aren't just getting default 0.0
         if (ast.contains("asterix_asterix_048_040_RHO") || ast.contains("asterix_048_040_RHO")) {
             GeoPoint p = calculateLatLon(rho, theta);
             lat = p.lat; lon = p.lon; validPos = true;
@@ -339,22 +314,14 @@ std::string MarsEngine::generateCoT(const nlohmann::json& ast) {
 
     if (!validPos) return "";
 
-    std::string now = getCurrentTimeISO(0);       // Current Time
-    std::string stale = getCurrentTimeISO(120);   // Expires in 2 Minutes (+120s)
-    
+    // --- UPDATED TIMESTAMP (Future Stale) ---
+    std::string now = getCurrentTimeISO(0);
+    std::string stale = getCurrentTimeISO(120);
+
     std::stringstream ss;
-    ss << "<event version=\"2.0\" uid=\"TARGEX-" << trackId << "\" "
-       << "type=\"a-u-S\" " 
+    ss << "<event version=\"2.0\" uid=\"TARGEX-" << trackId << "\" type=\"a-u-S\" " 
        << "time=\"" << now << "\" start=\"" << now << "\" stale=\"" << stale << "\" how=\"m-g\">"
        << "<point lat=\"" << lat << "\" lon=\"" << lon << "\" hae=\"0.0\" ce=\"10.0\" le=\"10.0\"/>"
-       << "<detail>"
-       << "<contact callsign=\"TRK-" << trackId << "\"/>"
-       << "<remarks>TARGEX Sea Surface Track</remarks>"
-       << "</detail>"
-       << "</event>";
-
-    // OPTIONAL: Print the XML to the console once to verify it looks right
-    std::cout << "DEBUG XML: " << ss.str() << std::endl;
-
+       << "<detail><contact callsign=\"TRK-" << trackId << "\"/><remarks>Sea Surface</remarks></detail></event>";
     return ss.str();
 }

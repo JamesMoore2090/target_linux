@@ -9,389 +9,229 @@
     <script src="/libs/milsymbol.js"></script>
 
     <style>
-        body { margin: 0; padding: 0; background: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; display: flex; height: 100vh; }
-        
-        /* --- SIDEBAR --- */
-        #sidebar {
-            width: 300px; min-width: 300px;
-            background: #1e1e1e; border-right: 1px solid #333;
-            color: #ccc; display: flex; flex-direction: column;
-            box-shadow: 2px 0 10px rgba(0,0,0,0.5); z-index: 1000;
+        body { 
+            margin: 0; padding: 0; background: #111; 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            overflow: hidden; 
+            display: flex; 
+            height: 100vh; 
         }
+        
+        /* --- SIDEBARS --- */
+        .sidebar { background: #1e1e1e; border-color: #333; color: #ccc; display: flex; flex-direction: column; z-index: 1000; }
+        #sidebar-left { width: 300px; min-width: 300px; border-right: 1px solid #333; }
+        #sidebar-right { width: 380px; min-width: 380px; border-left: 1px solid #333; }
 
+        /* --- HEADERS & SECTIONS --- */
         .sidebar-header { padding: 15px; background: #252526; border-bottom: 2px solid #007acc; }
         .sidebar-header h2 { margin: 0; color: #00ff00; font-size: 20px; letter-spacing: 1px; }
-        .sidebar-header span { font-size: 10px; color: #888; }
+        .sidebar-header span { font-size: 10px; color: #888; text-transform: uppercase; }
+        .section { padding: 12px 15px; border-bottom: 1px solid #333; }
+        .section-title { font-size: 11px; font-weight: bold; color: #007acc; margin-bottom: 8px; text-transform: uppercase; }
 
-        .section { padding: 15px; border-bottom: 1px solid #333; }
-        .section-title { font-size: 11px; font-weight: bold; color: #007acc; margin-bottom: 10px; text-transform: uppercase; }
-
-        /* Status Indicators */
-        .status-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
+        /* --- WIDGETS --- */
+        .status-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px; }
         .status-val { font-family: monospace; color: #fff; }
         .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
-        
         .green { background: #00ff00; box-shadow: 0 0 5px #00ff00; }
         .red { background: #ff0000; box-shadow: 0 0 5px #ff0000; }
-        .yellow { background: #ffff00; }
-
-        /* Form Elements */
-        .input-group { margin-bottom: 10px; }
-        .input-group label { display: block; font-size: 11px; color: #888; margin-bottom: 3px; }
-        .input-group input, .input-group select { 
-            width: 95%; background: #333; border: 1px solid #444; 
-            color: #fff; padding: 5px; font-size: 12px; 
-        }
         
-        /* Hidden Password Fields */
-        .pwd-field { display: none; margin-top: 5px; border-left: 2px solid #007acc; padding-left: 5px; }
-        .pwd-field input { border: 1px solid #555; background: #222; color: #fff; }
-
-        .btn { 
-            width: 100%; padding: 8px; cursor: pointer; border: none; 
-            font-weight: bold; background: #007acc; color: white; margin-top: 5px;
+        .input-group { margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+        .input-group label { font-size: 11px; color: #888; flex-grow: 1; }
+        .input-group input, .input-group select { 
+            width: 140px; background: #333; border: 1px solid #444; 
+            color: #fff; padding: 4px; font-size: 12px; 
         }
+        .input-group input[type="file"] { border:none; background:transparent; width: 100%; font-size:10px; }
+        
+        .btn { width: 100%; padding: 8px; cursor: pointer; border: none; font-weight: bold; background: #007acc; color: white; margin-top: 5px; font-size: 12px; }
         .btn:hover { background: #0099ff; }
-        .btn-nav { background: #444; margin-top: 5px; }
+        .btn-nav { background: #444; margin-bottom: 5px; }
 
-        /* --- MAP AREA --- */
-        #map { 
-            flex-grow: 1; height: 100%; background: #000;
-            position: relative; z-index: 1;
+        /* --- SSL PANEL --- */
+        #ssl-panel { 
+            display: none; /* Hidden by default */
+            background: #252526; 
+            border: 1px dashed #444; 
+            padding: 10px; 
+            margin-bottom: 10px; 
         }
-        .mil-icon { background: transparent; border: none; }
+        .sub-label { display: block; font-size: 10px; color: #aaa; margin-top: 5px; margin-bottom: 2px;}
+
+        /* --- LOG WINDOW --- */
+        #log-section { flex-grow: 1; display: flex; flex-direction: column; background: #111; border-top: 1px solid #444; overflow: hidden; }
+        .tabs { display: flex; background: #252526; border-bottom: 1px solid #333; }
+        .tab { flex: 1; text-align: center; padding: 8px; font-size: 11px; cursor: pointer; color: #888; background: #252526; border: none; border-bottom: 2px solid transparent; }
+        .tab.active { color: #fff; background: #1e1e1e; border-bottom: 2px solid #007acc; font-weight: bold; }
+        #log-content { flex-grow: 1; padding: 10px; font-family: 'Consolas', monospace; font-size: 11px; overflow-y: auto; color: #0f0; white-space: pre-wrap; }
+        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #222; padding-bottom: 2px; }
+        #map { flex-grow: 1; height: 100%; background: #000; z-index: 1; }
     </style>
 </head>
 <body>
 
-    <div id="sidebar">
-        <div class="sidebar-header">
-            <h2>TARGEX</h2>
-            <span>TACTICAL DISPLAY SYSTEM</span>
-        </div>
-
+    <div id="sidebar-left" class="sidebar">
+        <div class="sidebar-header"><h2>TARGEX</h2><span>Production Control</span></div>
         <div class="section">
             <div class="section-title">System Status</div>
-            <div class="status-row">
-                <span>Web Server</span>
-                <span class="status-val"><span id="ws-ind" class="indicator red"></span><span id="ws-text">Offline</span></span>
-            </div>
-            <div class="status-row">
-                <span>Rx Packets</span>
-                <span class="status-val" id="pkt-count" style="color: #00ff00;">0</span>
-            </div>
-             <div class="status-row">
-                <span>Active Tracks</span>
-                <span class="status-val" id="trk-count">0</span>
-            </div>
+            <div class="status-row"><span>Server Link</span><span class="status-val"><span id="ws-ind" class="indicator red"></span><span id="ws-text">Offline</span></span></div>
+            <div class="status-row"><span>Packets RX</span><span class="status-val" id="pkt-count" style="color: #00ff00;">0</span></div>
+            <div class="status-row"><span>Active Tracks</span><span class="status-val" id="trk-count">0</span></div>
         </div>
-
         <div class="section">
-            <div class="section-title">Network Configuration</div>
-            
-            <div class="input-group">
-                <label>ASTERIX RX PORT</label>
-                <input type="number" id="rx-port" value="8600">
-            </div>
-
-            <div class="input-group">
-                <label>CoT DESTINATION IP</label>
-                <input type="text" id="cot-ip" value="10.10.10.50"> </div>
-
-            <div class="input-group">
-                <label>CoT PORT</label>
-                <input type="number" id="cot-port" value="8089"> </div>
-
-            <div class="status-row">
-                <span>CoT Link Status</span>
-                <span class="status-val">
-                    <span id="cot-ind" class="indicator yellow"></span>
-                    <span id="cot-text">UDP/Ready</span>
-                </span>
+            <div class="section-title">Sensor Origin (Cat 34)</div>
+            <div class="input-group"><label>Latitude</label><input type="number" step="0.0001" id="sensor-lat" value="0.0000"></div>
+            <div class="input-group"><label>Longitude</label><input type="number" step="0.0001" id="sensor-lon" value="0.0000"></div>
+            <div style="font-size:10px; color:#666; text-align:right; font-style:italic; margin-bottom:10px;" id="origin-status">Waiting for Cat 34...</div>
+            <div style="border-top: 1px solid #333; padding-top: 10px; display:flex; align-items:center;">
+                <input type="checkbox" id="send-origin" checked style="width:auto; margin-right:8px;">
+                <label for="send-origin" style="font-size:11px; color:#ccc; cursor:pointer;">Transmit Origin via CoT</label>
             </div>
         </div>
-
-        <div class="section">
-            <div class="section-title">TAK SSL Integration</div>
-            
-            <div class="input-group">
-                <label>Protocol</label>
-                <select id="cot-proto" onchange="toggleSSL()">
-                    <option value="udp">UDP (Broadcast)</option>
-                    <option value="tcp">TCP (Unsecured)</option>
-                    <option value="ssl">SSL (TAK Server)</option>
-                </select>
-            </div>
-
-            <div id="ssl-panel" style="display:none; border: 1px dashed #444; padding: 8px;">
-                
-                <div class="input-group">
-                    <label>Client Identity (.p12)</label>
-                    <input type="file" id="client-p12" accept=".p12" onchange="showPwd('client-pwd-group')">
-                    <div id="client-pwd-group" class="pwd-field">
-                        <label>Password:</label>
-                        <input type="password" id="client-pwd" placeholder="Enter P12 Password">
-                    </div>
-                </div>
-
-                <div class="input-group">
-                    <label>Trust Store / CA (.p12)</label>
-                    <input type="file" id="trust-p12" accept=".p12" onchange="showPwd('trust-pwd-group')">
-                    <div id="trust-pwd-group" class="pwd-field">
-                        <label>Password:</label>
-                        <input type="password" id="trust-pwd" placeholder="Enter CA Password">
-                    </div>
-                </div>
-
-            </div>
-
-            <button class="btn" onclick="applyConfig()">APPLY CONFIGURATION</button>
-        </div>
-
-        <div class="section" style="border:none;">
-            <button class="btn btn-nav" onclick="location.href='/log'">VIEW LIVE LOG</button>
-            <button class="btn btn-nav" onclick="location.href='/files'">FILE MANAGER</button>
+        <div style="margin-top:auto; padding:15px; border-top:1px solid #333;">
+            <button class="btn btn-nav" onclick="location.href='/log'">VIEW FULL LIVE LOG</button>
+            <button class="btn btn-nav" onclick="location.href='/files'">OPEN FILE MANAGER</button>
         </div>
     </div>
 
     <div id="map"></div>
 
+    <div id="sidebar-right" class="sidebar">
+        <div class="sidebar-header" style="border-bottom-color: #ff9900;"><h2 style="color:#ff9900;">CONFIG</h2><span>Network & Diagnostics</span></div>
+        
+        <div class="section">
+            <div class="section-title">Data Output Configuration</div>
+            <div class="input-group"><label>Input Port (RX)</label><input type="number" id="rx-port" value="8600"></div>
+            <div class="input-group"><label>CoT IP</label><input type="text" id="cot-ip" value="239.2.3.1"></div>
+            <div class="input-group"><label>CoT Port</label><input type="number" id="cot-port" value="6969"></div>
+            
+            <div class="input-group">
+                <label>Protocol</label>
+                <select id="cot-proto" onchange="toggleSSL()">
+                    <option value="udp">UDP</option>
+                    <option value="tcp">TCP</option>
+                    <option value="ssl">SSL (TAK Server)</option>
+                </select>
+            </div>
+
+            <div id="ssl-panel">
+                <div class="section-title" style="color:#aaa;">Certificates (.p12)</div>
+                
+                <span class="sub-label">Client Certificate</span>
+                <input type="file" id="ssl-client-cert" accept=".p12">
+                <input type="password" id="ssl-client-pass" placeholder="Password" style="width:95%; margin-top:3px;">
+                
+                <span class="sub-label" style="margin-top:8px;">Trust Store</span>
+                <input type="file" id="ssl-trust-store" accept=".p12">
+                <input type="password" id="ssl-trust-pass" placeholder="Password" style="width:95%; margin-top:3px;">
+            </div>
+            
+            <button class="btn" onclick="applyConfig()">APPLY CONFIGURATION</button>
+        </div>
+
+        <div id="log-section">
+            <div class="tabs">
+                <div class="tab active" onclick="setTab('logs')">SERVER LOGS</div>
+                <div class="tab" onclick="setTab('data')">ASTERIX RAW</div>
+            </div>
+            <div id="log-content">Initializing...</div>
+        </div>
+    </div>
+
     <script>
-        // --- MAP INIT ---
-        let map;
-        try {
-            if (typeof L === 'undefined') throw new Error("Leaflet Lib Missing");
-            map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: 'Offline/Dark', maxZoom: 19
-            }).addTo(map);
-            setTimeout(() => { map.invalidateSize(); }, 100);
-        } catch(e) { alert("Map Library Missing!"); }
-
-        // --- STATE ---
-        const tracks = {}; 
-        let pktCounter = 0;
-        let hasCentered = false; 
-        let SENSOR_LAT = 38.5134; 
-        let SENSOR_LON = -77.3008;
-
-        // --- UI REFS ---
+        // --- GLOBAL STATE ---
         const ui = {
-            wsInd: document.getElementById('ws-ind'),
-            wsText: document.getElementById('ws-text'),
-            cotInd: document.getElementById('cot-ind'),
-            cotText: document.getElementById('cot-text'),
-            pktCount: document.getElementById('pkt-count'),
-            trkCount: document.getElementById('trk-count'),
-            sslPanel: document.getElementById('ssl-panel')
+            wsInd: document.getElementById('ws-ind'), wsText: document.getElementById('ws-text'),
+            pktCount: document.getElementById('pkt-count'), trkCount: document.getElementById('trk-count'),
+            log: document.getElementById('log-content'), latInput: document.getElementById('sensor-lat'),
+            lonInput: document.getElementById('sensor-lon'), originStatus: document.getElementById('origin-status')
         };
+        let SENSOR_LAT=0.0, SENSOR_LON=0.0, sensorMarker=null, originSet=false, activeTab='logs', pktCounter=0, isOnline=false;
+        const tracks={}; let map;
 
-        // --- WEBSOCKET ---
-        const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+        function toRad(deg){return deg*Math.PI/180;} function toDeg(rad){return rad*180/Math.PI;}
+        function polarToGeo(rangeNm, azimuthDeg){
+            const R=6371e3, rangeM=rangeNm*1852, ad=rangeM/R;
+            const lat1=toRad(SENSOR_LAT), lon1=toRad(SENSOR_LON), brng=toRad(azimuthDeg);
+            const lat2=Math.asin(Math.sin(lat1)*Math.cos(ad)+Math.cos(lat1)*Math.sin(ad)*Math.cos(brng));
+            const lon2=lon1+Math.atan2(Math.sin(brng)*Math.sin(ad)*Math.cos(lat1),Math.cos(ad)-Math.sin(lat1)*Math.sin(lat2));
+            return {lat:toDeg(lat2),lon:toDeg(lon2)};
+        }
 
-        socket.onopen = () => {
-            ui.wsInd.className = "indicator green";
-            ui.wsText.textContent = "Online";
-        };
+        setTimeout(()=>{if(typeof L!=='undefined'){
+            map=L.map('map',{zoomControl:false}).setView([38,-77],5);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'Offline',maxZoom:19}).addTo(map);
+        }},100);
 
-        socket.onclose = () => {
-            ui.wsInd.className = "indicator red";
-            ui.wsText.textContent = "Disconnected";
-        };
+        function updateSensorMarker(lat,lon){
+            if(!map)return; SENSOR_LAT=lat; SENSOR_LON=lon;
+            ui.latInput.value=lat.toFixed(5); ui.lonInput.value=lon.toFixed(5);
+            ui.originStatus.innerText="Origin set via Cat 34"; ui.originStatus.style.color="#00ff00";
+            if(sensorMarker)map.removeLayer(sensorMarker);
+            sensorMarker=L.circleMarker([lat,lon],{color:'#00ff00',fillColor:'#00ff00',fillOpacity:0.5,radius:6}).bindPopup("Sensor Origin").addTo(map);
+            if(!originSet){map.setView([lat,lon],10); originSet=true;}
+        }
 
-        socket.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            
-            // 1. Check for Status Update (Backend Feedback)
-            if (data.type === 'ssl_status') {
-                updateCoTStatus(data.status); // "connected", "failed", "connecting"
-                return;
-            }
-
-            // 2. Normal Data Packet
-            pktCounter++;
-            ui.pktCount.textContent = pktCounter.toLocaleString();
-            processPacket(data);
-        };
-
-        // --- UI LOGIC ---
-        function toggleSSL() {
+        // --- TOGGLE SSL UI ---
+        window.toggleSSL = () => {
             const proto = document.getElementById('cot-proto').value;
-            ui.sslPanel.style.display = (proto === 'ssl') ? 'block' : 'none';
-            
-            // Reset status text immediately on toggle
-            if (proto === 'ssl') {
-                updateCoTStatus("ready");
-            } else {
-                ui.cotInd.className = "indicator yellow";
-                ui.cotText.textContent = "UDP/Ready";
-            }
-        }
+            document.getElementById('ssl-panel').style.display = (proto === 'ssl') ? 'block' : 'none';
+        };
 
-        function showPwd(elementId) {
-            document.getElementById(elementId).style.display = "block";
-        }
+        // --- CONFIG ---
+        window.applyConfig = async () => {
+            const clientCert = document.getElementById('ssl-client-cert').files[0];
+            const trustCert = document.getElementById('ssl-trust-store').files[0];
 
-        function updateCoTStatus(status) {
-            if (status === 'connected') {
-                ui.cotInd.className = "indicator green";
-                ui.cotText.textContent = "SSL/Connected";
-            } else if (status === 'failed') {
-                ui.cotInd.className = "indicator red";
-                ui.cotText.textContent = "SSL/Failed";
-            } else if (status === 'connecting') {
-                ui.cotInd.className = "indicator yellow";
-                ui.cotText.textContent = "SSL/Connecting...";
-            } else {
-                ui.cotInd.className = "indicator yellow";
-                ui.cotText.textContent = "SSL/Ready";
-            }
-        }
-
-        // --- CONFIG SUBMISSION ---
-        async function applyConfig() {
-            const proto = document.getElementById('cot-proto').value;
-            
-            // 1. Basic Config
-            const config = {
-                rx_port: parseInt(document.getElementById('rx-port').value),
-                cot_ip: document.getElementById('cot-ip').value,
+            const cfg = { 
+                rx_port: parseInt(document.getElementById('rx-port').value), 
+                cot_ip: document.getElementById('cot-ip').value, 
                 cot_port: parseInt(document.getElementById('cot-port').value),
-                cot_proto: proto
+                cot_proto: document.getElementById('cot-proto').value,
+                send_sensor_pos: document.getElementById('send-origin').checked,
+                // Passwords are plain text strings
+                ssl_client_pass: document.getElementById('ssl-client-pass').value,
+                ssl_trust_pass: document.getElementById('ssl-trust-pass').value,
+                // For files, we just send the name for now as the backend isn't doing multipart upload
+                ssl_client_cert: clientCert ? clientCert.name : "",
+                ssl_trust_store: trustCert ? trustCert.name : ""
             };
-
-            // Set UI to "Connecting..." immediately if SSL
-            if (proto === 'ssl') updateCoTStatus("connecting");
-
-            try {
-                // Send JSON Config First
-                await fetch('/api/config', { method: 'POST', body: JSON.stringify(config) });
-
-                // 2. Handle SSL Files (Only if SSL is selected)
-                if (proto === 'ssl') {
-                    const formData = new FormData();
-                    
-                    const clientFile = document.getElementById('client-p12').files[0];
-                    const clientPwd = document.getElementById('client-pwd').value;
-                    const trustFile = document.getElementById('trust-p12').files[0];
-                    const trustPwd = document.getElementById('trust-pwd').value;
-
-                    if (!clientFile || !trustFile) {
-                        alert("Please select both Client and Trust Store .p12 files.");
-                        updateCoTStatus("failed");
-                        return;
-                    }
-
-                    // Append files and passwords
-                    formData.append('client_p12', clientFile);
-                    formData.append('client_pwd', clientPwd);
-                    formData.append('trust_p12', trustFile);
-                    formData.append('trust_pwd', trustPwd);
-
-                    const res = await fetch('/api/upload_ssl', { method: 'POST', body: formData });
-                    
-                    if (res.ok) {
-                        // Backend should now trigger the connection attempt
-                        // We wait for the WebSocket 'ssl_status' message to turn it green
-                        console.log("SSL Config Sent. Waiting for connection...");
-                    } else {
-                        throw new Error("Upload Failed");
-                    }
-                } else {
-                    alert("UDP Configuration Applied!");
-                }
-
-            } catch(e) { 
-                alert("Configuration Error: " + e.message);
-                if (proto === 'ssl') updateCoTStatus("failed");
-            }
-        }
-
-        // --- PACKET LOGIC ---
-        function getFloat(val) {
-            if (!val) return null;
-            if (Array.isArray(val)) return parseFloat(val[0]);
-            return parseFloat(val);
-        }
-
-        function processPacket(packet) {
-            if (!packet.layers || !packet.layers.asterix) return;
-            const ast = packet.layers.asterix;
             
-            let trackId = ast.asterix_asterix_048_161_TN || ast.asterix_048_161_TN || 
-                          ast.asterix_asterix_034_161_TN || ast.asterix_034_161_TN || "UNK";
-            if (Array.isArray(trackId)) trackId = trackId[0];
+            await fetch('/api/config', {method:'POST', body:JSON.stringify(cfg)});
+            alert("Configuration Applied!");
+        };
 
-            let lat = null, lon = null;
-            const rawLat34 = ast.asterix_asterix_034_120_LAT || ast.asterix_034_120_LAT;
-            const rawLon34 = ast.asterix_asterix_034_120_LON || ast.asterix_034_120_LON;
+        async function dataLoop(){try{const res=await fetch('/api/data');if(res.ok){if(!isOnline){ui.wsInd.className="indicator green";ui.wsText.innerText="Online";isOnline=true;}const packets=await res.json();if(Array.isArray(packets)&&packets.length>0){pktCounter+=packets.length;ui.pktCount.innerText=pktCounter.toLocaleString();if(activeTab==='data'){ui.log.innerText=JSON.stringify(packets[0].layers.asterix||packets[0],null,2);}packets.forEach(p=>processPacket(p));}}}catch(e){if(isOnline){ui.wsInd.className="indicator red";ui.wsText.innerText="Offline";isOnline=false;}}setTimeout(dataLoop,100);}
+        async function logLoop(){if(activeTab==='logs'){try{const res=await fetch('/api/log');if(res.ok){const data=await res.json();ui.log.innerHTML="";data.logs.forEach(line=>{const d=document.createElement('div');d.className="log-entry";d.textContent=line;ui.log.appendChild(d);});ui.log.scrollTop=ui.log.scrollHeight;}}catch(e){}}setTimeout(logLoop,1000);}
 
-            if (rawLat34 && rawLon34) {
-                lat = getFloat(rawLat34);
-                lon = getFloat(rawLon34);
-            } else {
-                const rho = getFloat(ast.asterix_asterix_048_040_RHO || ast.asterix_048_040_RHO);
-                const theta = getFloat(ast.asterix_asterix_048_040_THETA || ast.asterix_048_040_THETA);
-                if (rho !== null && theta !== null) {
-                    const coords = calculateLatLon(SENSOR_LAT, SENSOR_LON, rho, theta);
-                    lat = coords.lat;
-                    lon = coords.lon;
-                }
+        function processPacket(packet){
+            if(!packet.layers||!packet.layers.asterix)return; const ast=packet.layers.asterix;
+            let id=null,lat=null,lon=null,rho=null,theta=null,cat=null;
+            for(const k in ast){
+                if(k.includes("000_10_CAT"))cat=parseInt(ast[k]);
+                if(k.includes("120_LAT"))lat=parseFloat(ast[k]);
+                if(k.includes("120_LON"))lon=parseFloat(ast[k]);
+                if(k.includes("040_RHO"))rho=parseFloat(ast[k]);
+                if(k.includes("040_THETA"))theta=parseFloat(ast[k]);
+                if(k.includes("161_TN"))id=ast[k];
             }
-
-            if (lat !== null && lon !== null && !isNaN(lat)) {
-                if (!hasCentered && map) { map.setView([lat, lon], 10); hasCentered = true; }
-                updateTrack(trackId, lat, lon);
-            }
+            if(Array.isArray(id))id=id[0];
+            if(lat!==null&&lon!==null&&(cat===34||id===null||id==="0")){updateSensorMarker(lat,lon);return;}
+            if(!originSet&&rho!==null)return;
+            if(lat===null&&rho!==null&&theta!==null){const g=polarToGeo(rho,theta);lat=g.lat;lon=g.lon;}
+            if(lat!==null&&lon!==null&&id!==null)updateTrack(id,lat,lon);
         }
-
-        function calculateLatLon(lat1, lon1, rangeNM, bearingDeg) {
-            const R = 3440.065; 
-            const radLat1 = lat1 * (Math.PI / 180);
-            const radLon1 = lon1 * (Math.PI / 180);
-            const radBearing = bearingDeg * (Math.PI / 180);
-            const angularDist = rangeNM / R;
-            const radLat2 = Math.asin(Math.sin(radLat1) * Math.cos(angularDist) + Math.cos(radLat1) * Math.sin(angularDist) * Math.cos(radBearing));
-            const radLon2 = radLon1 + Math.atan2(Math.sin(radBearing) * Math.sin(angularDist) * Math.cos(radLat1), Math.cos(angularDist) - Math.sin(radLat1) * Math.sin(radLat2));
-            return { lat: radLat2 * (180 / Math.PI), lon: radLon2 * (180 / Math.PI) };
+        function updateTrack(id,lat,lon){
+            if(!map||typeof ms==='undefined')return;
+            const sidc="SUSP-------****", mysymbol=new ms.Symbol(sidc,{size:24,uniqueDesignation:id,colorMode:"Light"});
+            const icon=L.divIcon({className:'mil-icon',html:mysymbol.asSVG(),iconAnchor:[mysymbol.getAnchor().x,mysymbol.getAnchor().y]});
+            if(tracks[id]){tracks[id].marker.setLatLng([lat,lon]);tracks[id].marker.setIcon(icon);tracks[id].lastUpdate=Date.now();}
+            else{const m=L.marker([lat,lon],{icon:icon}).addTo(map);m.bindPopup(`Track: ${id}`);tracks[id]={marker:m,lastUpdate:Date.now()};}
         }
-
-        // Dropout Logic (5 sec)
-        setInterval(() => {
-            const now = Date.now();
-            let count = 0;
-            Object.keys(tracks).forEach(id => {
-                if (now - tracks[id].lastUpdate > 5000) {
-                    if (map) map.removeLayer(tracks[id].marker);
-                    delete tracks[id];
-                } else { count++; }
-            });
-            ui.trkCount.textContent = count;
-        }, 1000);
-
-        function updateTrack(id, lat, lon) {
-            if (!map || typeof ms === 'undefined') return;
-            const numLat = Number(lat);
-            const numLon = Number(lon);
-            if (isNaN(numLat)) return;
-
-            // S = Standard, U = Unknown, S = Surface (Sea), P = Present
-            const sidc = `SUSP-------****`; 
-
-            const mysymbol = new ms.Symbol(sidc, { size: 30, uniqueDesignation: id, colorMode: "Light" });
-            const icon = L.divIcon({ className: 'mil-icon', html: mysymbol.asSVG(), iconAnchor: [mysymbol.getAnchor().x, mysymbol.getAnchor().y] });
-
-            if (tracks[id]) {
-                tracks[id].marker.setLatLng([numLat, numLon]);
-                tracks[id].marker.setIcon(icon);
-                tracks[id].lastUpdate = Date.now();
-            } else {
-                const marker = L.marker([numLat, numLon], {icon: icon}).addTo(map);
-                marker.bindPopup(`<b>Track: ${id}</b><br>Lat: ${numLat.toFixed(4)}<br>Lon: ${numLon.toFixed(4)}`);
-                tracks[id] = { marker: marker, lastUpdate: Date.now() };
-            }
-        }
+        setInterval(()=>{const now=Date.now();let c=0;Object.keys(tracks).forEach(id=>{if(now-tracks[id].lastUpdate>5000){if(map)map.removeLayer(tracks[id].marker);delete tracks[id];}else c++;});ui.trkCount.innerText=c;},1000);
+        window.setTab=(t)=>{activeTab=t;document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));event.target.classList.add('active');ui.log.innerHTML=(t==='logs')?"Loading...":"Waiting...";};
+        
+        dataLoop(); logLoop();
     </script>
 </body>
 </html>

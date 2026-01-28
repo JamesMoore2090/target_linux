@@ -29,6 +29,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Crow)
 
 find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
 
 # Include directories
 include_directories(include)
@@ -45,7 +46,7 @@ add_executable(targex_cli ${SOURCES})
 target_link_libraries(targex_cli PRIVATE 
     nlohmann_json::nlohmann_json 
     spdlog::spdlog 
-    Crow::Crow
+    Threads::Threads
     OpenSSL::SSL    
     OpenSSL::Crypto
 )
