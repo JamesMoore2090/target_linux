@@ -1,20 +1,68 @@
 #pragma once
-#include <string>
-#include <nlohmann/json.hpp>
 
-// MARS: Monitoring, Analysis, and Recording System
-// Responsibility: Convert ASTERIX JSON -> CoT XML
+#include <string>
+#include <vector>
+#include <nlohmann/json.hpp>
+#include <functional> 
+
+// OpenSSL Headers
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
+// Configuration Struct
+struct CoTConfig {
+    std::string ip = "239.2.3.1";
+    int port = 6969;
+    std::string protocol = "udp"; // "udp", "tcp", "ssl"
+    
+    // SSL Specifics
+    std::string clientP12Path;
+    std::string clientPwd;
+    std::string trustP12Path;
+    std::string trustPwd;
+};
+
 class MarsEngine {
 public:
+    // Define the callback type
+    using StatusCallback = std::function<void(std::string)>;
+
     MarsEngine();
+    ~MarsEngine();
+
+    // Configuration & Processing
+    void updateConfig(const CoTConfig& config);
+    void processAndSend(const nlohmann::json& packet);
+
+    // Register the UI callback
+    void setStatusCallback(StatusCallback cb) { m_statusCallback = cb; }
     
-    // The main function: Takes a raw packet, returns a CoT XML string (or empty if invalid)
-    std::string processPacket(const nlohmann::json& packet);
+    // Status Getter
+    std::string getConnectionStatus() const { return m_connStatus; }
 
 private:
-    // Helper to generate UUIDs for CoT
-    std::string generateUUID(const std::string& trackID);
+    CoTConfig m_config;
+    int m_sockFd;
+    StatusCallback m_statusCallback;
     
-    // Helper to determine Identity (Friend/Hostile/Unknown) based on Mode 3/A or IFF
-    std::string determineAffiliation(const nlohmann::json& asterix);
+    // SSL Context
+    SSL_CTX* m_sslCtx;
+    SSL* m_ssl;
+    
+    std::string m_connStatus; 
+
+    // Network Helpers
+    void initSocket();
+    bool initSSL();
+    void cleanupSSL();
+    void sendData(const std::string& data);
+    void updateStatus(const std::string& status);
+
+    // Data Helpers
+    std::string generateCoT(const nlohmann::json& ast);
+    
+    
+    // Math for Polar -> Lat/Lon conversion
+    struct GeoPoint { double lat; double lon; };
+    GeoPoint calculateLatLon(double range, double bearing);
 };

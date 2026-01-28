@@ -11,30 +11,15 @@
     <style>
         body { margin: 0; padding: 0; background: #111; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; display: flex; height: 100vh; }
         
-        /* --- LEFT SIDEBAR --- */
+        /* --- SIDEBAR --- */
         #sidebar {
-            width: 300px;
-            background: #1e1e1e;
-            border-right: 1px solid #333;
-            color: #ccc;
-            display: flex;
-            flex-direction: column;
-            box-shadow: 2px 0 10px rgba(0,0,0,0.5);
-            z-index: 1000;
-        }
-        #map { 
-            flex-grow: 1; 
-            height: 100%; 
-            background: #000;
-            position: relative; /* Ensure it stacks correctly */
-            z-index: 1;         /* Lower than sidebar */
+            width: 300px; min-width: 300px;
+            background: #1e1e1e; border-right: 1px solid #333;
+            color: #ccc; display: flex; flex-direction: column;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.5); z-index: 1000;
         }
 
-        .sidebar-header {
-            padding: 15px;
-            background: #252526;
-            border-bottom: 2px solid #007acc;
-        }
+        .sidebar-header { padding: 15px; background: #252526; border-bottom: 2px solid #007acc; }
         .sidebar-header h2 { margin: 0; color: #00ff00; font-size: 20px; letter-spacing: 1px; }
         .sidebar-header span { font-size: 10px; color: #888; }
 
@@ -45,6 +30,7 @@
         .status-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 13px; }
         .status-val { font-family: monospace; color: #fff; }
         .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+        
         .green { background: #00ff00; box-shadow: 0 0 5px #00ff00; }
         .red { background: #ff0000; box-shadow: 0 0 5px #ff0000; }
         .yellow { background: #ffff00; }
@@ -56,7 +42,10 @@
             width: 95%; background: #333; border: 1px solid #444; 
             color: #fff; padding: 5px; font-size: 12px; 
         }
-        .input-group input[type="file"] { font-size: 10px; }
+        
+        /* Hidden Password Fields */
+        .pwd-field { display: none; margin-top: 5px; border-left: 2px solid #007acc; padding-left: 5px; }
+        .pwd-field input { border: 1px solid #555; background: #222; color: #fff; }
 
         .btn { 
             width: 100%; padding: 8px; cursor: pointer; border: none; 
@@ -66,9 +55,10 @@
         .btn-nav { background: #444; margin-top: 5px; }
 
         /* --- MAP AREA --- */
-        #map { flex-grow: 1; height: 100%; background: #000; }
-
-        /* Custom Icon Styling */
+        #map { 
+            flex-grow: 1; height: 100%; background: #000;
+            position: relative; z-index: 1;
+        }
         .mil-icon { background: transparent; border: none; }
     </style>
 </head>
@@ -82,7 +72,6 @@
 
         <div class="section">
             <div class="section-title">System Status</div>
-            
             <div class="status-row">
                 <span>Web Server</span>
                 <span class="status-val"><span id="ws-ind" class="indicator red"></span><span id="ws-text">Offline</span></span>
@@ -107,17 +96,18 @@
 
             <div class="input-group">
                 <label>CoT DESTINATION IP</label>
-                <input type="text" id="cot-ip" value="239.2.3.1">
-            </div>
+                <input type="text" id="cot-ip" value="10.10.10.50"> </div>
 
             <div class="input-group">
                 <label>CoT PORT</label>
-                <input type="number" id="cot-port" value="6969">
-            </div>
+                <input type="number" id="cot-port" value="8089"> </div>
 
             <div class="status-row">
                 <span>CoT Link Status</span>
-                <span class="status-val"><span class="indicator yellow"></span>UDP/Ready</span>
+                <span class="status-val">
+                    <span id="cot-ind" class="indicator yellow"></span>
+                    <span id="cot-text">UDP/Ready</span>
+                </span>
             </div>
         </div>
 
@@ -126,26 +116,33 @@
             
             <div class="input-group">
                 <label>Protocol</label>
-                <select id="cot-proto">
-                    <option value="udp">UDP (No SSL)</option>
+                <select id="cot-proto" onchange="toggleSSL()">
+                    <option value="udp">UDP (Broadcast)</option>
                     <option value="tcp">TCP (Unsecured)</option>
-                    <option value="ssl">SSL / TLS (TAK Server)</option>
+                    <option value="ssl">SSL (TAK Server)</option>
                 </select>
             </div>
 
-            <div id="ssl-files" style="display:none; border: 1px dashed #444; padding: 5px;">
+            <div id="ssl-panel" style="display:none; border: 1px dashed #444; padding: 8px;">
+                
                 <div class="input-group">
-                    <label>Client Cert (.pem)</label>
-                    <input type="file" id="cert-file">
+                    <label>Client Identity (.p12)</label>
+                    <input type="file" id="client-p12" accept=".p12" onchange="showPwd('client-pwd-group')">
+                    <div id="client-pwd-group" class="pwd-field">
+                        <label>Password:</label>
+                        <input type="password" id="client-pwd" placeholder="Enter P12 Password">
+                    </div>
                 </div>
+
                 <div class="input-group">
-                    <label>Private Key (.key)</label>
-                    <input type="file" id="key-file">
+                    <label>Trust Store / CA (.p12)</label>
+                    <input type="file" id="trust-p12" accept=".p12" onchange="showPwd('trust-pwd-group')">
+                    <div id="trust-pwd-group" class="pwd-field">
+                        <label>Password:</label>
+                        <input type="password" id="trust-pwd" placeholder="Enter CA Password">
+                    </div>
                 </div>
-                <div class="input-group">
-                    <label>CA Certificate (.pem)</label>
-                    <input type="file" id="ca-file">
-                </div>
+
             </div>
 
             <button class="btn" onclick="applyConfig()">APPLY CONFIGURATION</button>
@@ -160,50 +157,34 @@
     <div id="map"></div>
 
     <script>
-        // --- MAP INITIALIZATION ---
+        // --- MAP INIT ---
         let map;
         try {
             if (typeof L === 'undefined') throw new Error("Leaflet Lib Missing");
-            
-            // 1. Initialize Map
-            map = L.map('map', {
-                zoomControl: false // Move zoom control if needed, or keep default
-            }).setView([0, 0], 2);
-            
-            // 2. Add Tiles
+            map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                 attribution: 'Offline/Dark', maxZoom: 19
             }).addTo(map);
-
-            // 3. CRITICAL FIX: Force Leaflet to re-measure the <div> size
-            // The sidebar layout can cause the map to think it has 0 width at startup.
             setTimeout(() => { map.invalidateSize(); }, 100);
+        } catch(e) { alert("Map Library Missing!"); }
 
-        } catch(e) {
-            alert("Map Library Missing! Check /public/libs folder.");
-        }
-
-        // --- GLOBAL STATE ---
+        // --- STATE ---
         const tracks = {}; 
         let pktCounter = 0;
         let hasCentered = false; 
         let SENSOR_LAT = 38.5134; 
         let SENSOR_LON = -77.3008;
 
-        // --- UI UPDATERS ---
+        // --- UI REFS ---
         const ui = {
             wsInd: document.getElementById('ws-ind'),
             wsText: document.getElementById('ws-text'),
+            cotInd: document.getElementById('cot-ind'),
+            cotText: document.getElementById('cot-text'),
             pktCount: document.getElementById('pkt-count'),
             trkCount: document.getElementById('trk-count'),
-            protoSelect: document.getElementById('cot-proto'),
-            sslPanel: document.getElementById('ssl-files')
+            sslPanel: document.getElementById('ssl-panel')
         };
-
-        // UI Logic: Show/Hide SSL fields
-        ui.protoSelect.addEventListener('change', (e) => {
-            ui.sslPanel.style.display = (e.target.value === 'ssl') ? 'block' : 'none';
-        });
 
         // --- WEBSOCKET ---
         const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -220,27 +201,114 @@
         };
 
         socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            // 1. Check for Status Update (Backend Feedback)
+            if (data.type === 'ssl_status') {
+                updateCoTStatus(data.status); // "connected", "failed", "connecting"
+                return;
+            }
+
+            // 2. Normal Data Packet
             pktCounter++;
             ui.pktCount.textContent = pktCounter.toLocaleString();
-            try { processPacket(JSON.parse(event.data)); } catch (e) { }
+            processPacket(data);
         };
 
-        // --- DROPOUT LOGIC (5 Sec) ---
-        setInterval(() => {
-            const now = Date.now();
-            let count = 0;
-            Object.keys(tracks).forEach(id => {
-                if (now - tracks[id].lastUpdate > 5000) {
-                    if (map) map.removeLayer(tracks[id].marker);
-                    delete tracks[id];
-                } else {
-                    count++;
-                }
-            });
-            ui.trkCount.textContent = count;
-        }, 1000);
+        // --- UI LOGIC ---
+        function toggleSSL() {
+            const proto = document.getElementById('cot-proto').value;
+            ui.sslPanel.style.display = (proto === 'ssl') ? 'block' : 'none';
+            
+            // Reset status text immediately on toggle
+            if (proto === 'ssl') {
+                updateCoTStatus("ready");
+            } else {
+                ui.cotInd.className = "indicator yellow";
+                ui.cotText.textContent = "UDP/Ready";
+            }
+        }
 
-        // --- PACKET PROCESSING ---
+        function showPwd(elementId) {
+            document.getElementById(elementId).style.display = "block";
+        }
+
+        function updateCoTStatus(status) {
+            if (status === 'connected') {
+                ui.cotInd.className = "indicator green";
+                ui.cotText.textContent = "SSL/Connected";
+            } else if (status === 'failed') {
+                ui.cotInd.className = "indicator red";
+                ui.cotText.textContent = "SSL/Failed";
+            } else if (status === 'connecting') {
+                ui.cotInd.className = "indicator yellow";
+                ui.cotText.textContent = "SSL/Connecting...";
+            } else {
+                ui.cotInd.className = "indicator yellow";
+                ui.cotText.textContent = "SSL/Ready";
+            }
+        }
+
+        // --- CONFIG SUBMISSION ---
+        async function applyConfig() {
+            const proto = document.getElementById('cot-proto').value;
+            
+            // 1. Basic Config
+            const config = {
+                rx_port: parseInt(document.getElementById('rx-port').value),
+                cot_ip: document.getElementById('cot-ip').value,
+                cot_port: parseInt(document.getElementById('cot-port').value),
+                cot_proto: proto
+            };
+
+            // Set UI to "Connecting..." immediately if SSL
+            if (proto === 'ssl') updateCoTStatus("connecting");
+
+            try {
+                // Send JSON Config First
+                await fetch('/api/config', { method: 'POST', body: JSON.stringify(config) });
+
+                // 2. Handle SSL Files (Only if SSL is selected)
+                if (proto === 'ssl') {
+                    const formData = new FormData();
+                    
+                    const clientFile = document.getElementById('client-p12').files[0];
+                    const clientPwd = document.getElementById('client-pwd').value;
+                    const trustFile = document.getElementById('trust-p12').files[0];
+                    const trustPwd = document.getElementById('trust-pwd').value;
+
+                    if (!clientFile || !trustFile) {
+                        alert("Please select both Client and Trust Store .p12 files.");
+                        updateCoTStatus("failed");
+                        return;
+                    }
+
+                    // Append files and passwords
+                    formData.append('client_p12', clientFile);
+                    formData.append('client_pwd', clientPwd);
+                    formData.append('trust_p12', trustFile);
+                    formData.append('trust_pwd', trustPwd);
+
+                    const res = await fetch('/api/upload_ssl', { method: 'POST', body: formData });
+                    
+                    if (res.ok) {
+                        // Backend should now trigger the connection attempt
+                        // We wait for the WebSocket 'ssl_status' message to turn it green
+                        console.log("SSL Config Sent. Waiting for connection...");
+                    } else {
+                        throw new Error("Upload Failed");
+                    }
+                } else {
+                    alert("UDP Configuration Applied!");
+                }
+
+            } catch(e) { 
+                alert("Configuration Error: " + e.message);
+                if (proto === 'ssl') updateCoTStatus("failed");
+            }
+        }
+
+        // --- PACKET LOGIC ---
         function getFloat(val) {
             if (!val) return null;
             if (Array.isArray(val)) return parseFloat(val[0]);
@@ -250,24 +318,19 @@
         function processPacket(packet) {
             if (!packet.layers || !packet.layers.asterix) return;
             const ast = packet.layers.asterix;
-
-            // ID
+            
             let trackId = ast.asterix_asterix_048_161_TN || ast.asterix_048_161_TN || 
                           ast.asterix_asterix_034_161_TN || ast.asterix_034_161_TN || "UNK";
             if (Array.isArray(trackId)) trackId = trackId[0];
 
             let lat = null, lon = null;
-
-            // 1. Explicit Lat/Lon (Cat 34)
             const rawLat34 = ast.asterix_asterix_034_120_LAT || ast.asterix_034_120_LAT;
             const rawLon34 = ast.asterix_asterix_034_120_LON || ast.asterix_034_120_LON;
 
             if (rawLat34 && rawLon34) {
                 lat = getFloat(rawLat34);
                 lon = getFloat(rawLon34);
-            } 
-            // 2. Polar Calc (Cat 48)
-            else {
+            } else {
                 const rho = getFloat(ast.asterix_asterix_048_040_RHO || ast.asterix_048_040_RHO);
                 const theta = getFloat(ast.asterix_asterix_048_040_THETA || ast.asterix_048_040_THETA);
                 if (rho !== null && theta !== null) {
@@ -294,13 +357,26 @@
             return { lat: radLat2 * (180 / Math.PI), lon: radLon2 * (180 / Math.PI) };
         }
 
+        // Dropout Logic (5 sec)
+        setInterval(() => {
+            const now = Date.now();
+            let count = 0;
+            Object.keys(tracks).forEach(id => {
+                if (now - tracks[id].lastUpdate > 5000) {
+                    if (map) map.removeLayer(tracks[id].marker);
+                    delete tracks[id];
+                } else { count++; }
+            });
+            ui.trkCount.textContent = count;
+        }, 1000);
+
         function updateTrack(id, lat, lon) {
             if (!map || typeof ms === 'undefined') return;
             const numLat = Number(lat);
             const numLon = Number(lon);
             if (isNaN(numLat)) return;
 
-            // IDENTITY: Unknown Surface (Sea)
+            // S = Standard, U = Unknown, S = Surface (Sea), P = Present
             const sidc = `SUSP-------****`; 
 
             const mysymbol = new ms.Symbol(sidc, { size: 30, uniqueDesignation: id, colorMode: "Light" });
@@ -314,47 +390,6 @@
                 const marker = L.marker([numLat, numLon], {icon: icon}).addTo(map);
                 marker.bindPopup(`<b>Track: ${id}</b><br>Lat: ${numLat.toFixed(4)}<br>Lon: ${numLon.toFixed(4)}`);
                 tracks[id] = { marker: marker, lastUpdate: Date.now() };
-            }
-        }
-
-        // --- CONFIG & SSL UPLOAD ---
-        async function applyConfig() {
-            const config = {
-                rx_port: parseInt(document.getElementById('rx-port').value),
-                cot_ip: document.getElementById('cot-ip').value,
-                cot_port: parseInt(document.getElementById('cot-port').value),
-                cot_proto: document.getElementById('cot-proto').value
-            };
-
-            // 1. Send Basic Config
-            try {
-                const res = await fetch('/api/config', {
-                    method: 'POST',
-                    body: JSON.stringify(config)
-                });
-                if(res.ok) alert("Network Config Applied!");
-            } catch(e) { alert("Error sending config"); }
-
-            // 2. Handle SSL Files (If selected)
-            if (config.cot_proto === 'ssl') {
-                const formData = new FormData();
-                const cert = document.getElementById('cert-file').files[0];
-                const key = document.getElementById('key-file').files[0];
-                const ca = document.getElementById('ca-file').files[0];
-
-                if (cert) formData.append('cert', cert);
-                if (key) formData.append('key', key);
-                if (ca) formData.append('ca', ca);
-
-                if (cert || key || ca) {
-                    try {
-                        const sslRes = await fetch('/api/upload_ssl', {
-                            method: 'POST',
-                            body: formData
-                        });
-                        if(sslRes.ok) alert("SSL Certificates Uploaded Successfully!");
-                    } catch(e) { alert("SSL Upload Failed"); }
-                }
             }
         }
     </script>

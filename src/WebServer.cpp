@@ -1,8 +1,16 @@
 #include "WebServer.hpp"
 #include "Logger.hpp"
 #include <filesystem>
+#include <algorithm>
 
 namespace fs = std::filesystem;
+
+std::string trim(const std::string& str) {
+    size_t first = str.find_first_not_of(" \t\r\n");
+    if (std::string::npos == first) return str;
+    size_t last = str.find_last_not_of(" \t\r\n");
+    return str.substr(first, (last - first + 1));
+}
 
 // bridge class to send Crow logs to Targex Logger
 // bridge class to send Crow logs to Targex Logger
@@ -20,7 +28,7 @@ public:
         // Map Crow levels to Targex Logger levels
         switch (level) {
             case crow::LogLevel::Debug:
-                // Logger::debug("[WEB] {}", cleanMessage); 
+                Logger::debug("[WEB] {}", cleanMessage); 
                 break;
             case crow::LogLevel::Info:
                 Logger::info("[WEB] {}", cleanMessage);
@@ -36,8 +44,16 @@ public:
     }
 };
 
-WebServer::WebServer(AppConfig& config, TargexCore& targexCore) : m_config(config),m_engine(targexCore) {
+WebServer::WebServer(AppConfig& config, TargexCore& targexCore, MarsEngine& mars) : m_config(config),m_engine(targexCore),m_mars(mars) {
     setupRoutes();
+
+    m_mars.setStatusCallback([this](std::string status) {
+        // We use nlohmann/json to make the packet
+        nlohmann::json j;
+        j["type"] = "ssl_status";
+        j["status"] = status;
+        this->broadcastPacket(j.dump());
+    });
 }
 
 WebServer::~WebServer() {
@@ -358,24 +374,107 @@ void WebServer::setupRoutes() {
     CROW_ROUTE(app, "/api/config")
     .methods("GET"_method, "POST"_method)
     ([this](const crow::request& req) {
-        if (req.method == "GET"_method) {
-            crow::json::wvalue x;
-            x["rx_port"] = m_config.rx_port;
-            // You will need to add these fields to your AppConfig struct later
-            x["cot_ip"] = "239.2.3.1"; // Default Multicast
-            x["cot_port"] = 6969;
-            return crow::response(x);
-        }
-        else {
-            auto x = crow::json::load(req.body);
-            if (!x) return crow::response(400);
+        auto x = crow::json::load(req.body);
+        if (!x) return crow::response(400);
+
+        CoTConfig cfg;
+        cfg.ip = x["cot_ip"].s();
+        cfg.port = x["cot_port"].i();
+        cfg.protocol = x["cot_proto"].s();
+
+        // Update Mars (triggers connection if not SSL)
+        m_mars.updateConfig(cfg);
+        
+        return crow::response(200);
+        // if (req.method == "GET"_method) {
+        //     crow::json::wvalue x;
+        //     x["rx_port"] = m_config.rx_port;
+        //     // You will need to add these fields to your AppConfig struct later
+        //     x["cot_ip"] = "239.2.3.1"; // Default Multicast
+        //     x["cot_port"] = 6969;
+        //     return crow::response(x);
+        // }
+        // else {
+        //     auto x = crow::json::load(req.body);
+        //     if (!x) return crow::response(400);
             
-            // Update Config (In a real app, save to config.json here)
-            m_config.rx_port = x["rx_port"].i();
-            Logger::info("Config Updated: RX Port {}", m_config.rx_port);
+        //     // Update Config (In a real app, save to config.json here)
+        //     m_config.rx_port = x["rx_port"].i();
+        //     Logger::info("Config Updated: RX Port {}", m_config.rx_port);
             
-            return crow::response(200);
+        //     return crow::response(200);
+        // }
+    });
+
+    CROW_ROUTE(app, "/api/upload_ssl")
+    .methods("POST"_method)
+    ([this](const crow::request& req) {
+        // 1. Get Boundary
+        std::string contentType = req.get_header_value("Content-Type");
+        size_t boundaryPos = contentType.find("boundary=");
+        if (boundaryPos == std::string::npos) return crow::response(400, "Missing boundary");
+        std::string boundary = "--" + contentType.substr(boundaryPos + 9);
+
+        // 2. Parse Fields
+        std::string clientP12 = getPartValue(req.body, boundary, "client_p12");
+        std::string clientPwd = getPartValue(req.body, boundary, "client_pwd");
+        std::string trustP12 = getPartValue(req.body, boundary, "trust_p12");
+        std::string trustPwd = getPartValue(req.body, boundary, "trust_pwd");
+
+        // --- FIX: TRIM PASSWORDS ---
+        clientPwd = trim(clientPwd);
+        trustPwd = trim(trustPwd);
+
+        // --- DEBUG LOGGING ---
+        Logger::info("SSL: Received P12. ClientPWD Length: {}, TrustPWD Length: {}", 
+                     clientPwd.length(), trustPwd.length());
+        // Uncomment this only if you need to see the raw password in logs:
+        // std::cout << "DEBUG PASSWORD: [" << clientPwd << "]" << std::endl;
+
+        if (clientP12.empty() || trustP12.empty()) {
+            Logger::error("Upload Failed: Missing P12 files");
+            return crow::response(400, "Missing files");
         }
+
+        // 3. Save Files to Disk
+        // We save them to the 'resources' folder
+        std::string clientPath = "resources/client_identity.p12";
+        std::string trustPath = "resources/trust_store.p12";
+
+        std::ofstream cFile(clientPath, std::ios::binary);
+        cFile << clientP12;
+        cFile.close();
+
+        std::ofstream tFile(trustPath, std::ios::binary);
+        tFile << trustP12;
+        tFile.close();
+
+        Logger::info("SSL: Certificates saved to resources/");
+
+        // 4. Update MarsEngine Configuration
+        // We reuse the current IP/Port from previous config or defaults
+        // Note: Ideally we store the current IP/Port in MarsEngine to retrieve, 
+        // but for now we assume the user set them in the UI inputs which triggered /api/config earlier.
+        
+        CoTConfig sslConfig;
+        sslConfig.protocol = "ssl";
+        sslConfig.clientP12Path = clientPath;
+        sslConfig.clientPwd = clientPwd;
+        sslConfig.trustP12Path = trustPath;
+        sslConfig.trustPwd = trustPwd;
+        
+        // We need the IP/Port. Since this request is multipart, we didn't send them easily.
+        // HACK: We will let MarsEngine keep its existing IP/Port if we don't supply them,
+        // OR we can parse them if we added them to formData.
+        // For robustness, MarsEngine::updateConfig should probably merge with existing if fields are missing.
+        // Let's assume MarsEngine handles the merge or we force a re-connect.
+        // (Actually, better approach: Use the /api/config values. 
+        //  The WebUI calls /api/config FIRST, setting IP/Port. 
+        //  Then calls /api/upload_ssl. So Mars has the IP/Port stored.)
+        
+        m_mars.updateConfig(sslConfig); 
+
+        return crow::response(200);
     });
 }
 
@@ -398,6 +497,28 @@ void WebServer::start() {
     m_serverThread = std::thread([this](){
         app.port(m_config.rx_port_web).multithreaded().run();
     });
+}
+
+std::string WebServer::getPartValue(const std::string& body, const std::string& boundary, const std::string& partName) {
+    std::string searchKey = "name=\"" + partName + "\"";
+    size_t partStart = body.find(searchKey);
+    if (partStart == std::string::npos) return "";
+
+    // Find start of data (double CRLF after headers)
+    size_t dataStart = body.find("\r\n\r\n", partStart);
+    if (dataStart == std::string::npos) return "";
+    dataStart += 4; // Skip the \r\n\r\n
+
+    // Find end of data (next boundary)
+    size_t dataEnd = body.find(boundary, dataStart);
+    if (dataEnd == std::string::npos) return "";
+
+    // Remove trailing \r\n
+    if (dataEnd >= 2 && body[dataEnd-2] == '\r' && body[dataEnd-1] == '\n') {
+        dataEnd -= 2;
+    }
+
+    return body.substr(dataStart, dataEnd - dataStart);
 }
 
 void WebServer::broadcastPacket(const std::string& jsonString) {
@@ -424,6 +545,8 @@ void WebServer::broadcastPacket(const std::string& jsonString) {
         conn->send_text(jsonString);
     }
 }
+
+
 
 void WebServer::stop() {
     // 1. Tell Crow to stop accepting new connections

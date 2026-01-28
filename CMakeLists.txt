@@ -28,8 +28,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(Crow)
 
+find_package(OpenSSL REQUIRED)
+
 # Include directories
 include_directories(include)
+include_directories(${OPENSSL_INCLUDE_DIR})
 
 # Define source files
 file(GLOB_RECURSE SOURCES "src/*.cpp")
@@ -43,4 +46,6 @@ target_link_libraries(targex_cli PRIVATE
     nlohmann_json::nlohmann_json 
     spdlog::spdlog 
     Crow::Crow
+    OpenSSL::SSL    
+    OpenSSL::Crypto
 )

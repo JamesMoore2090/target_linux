@@ -13,6 +13,7 @@
 #include "Logger.hpp"
 #include "ConfigLoader.hpp"
 #include "WebServer.hpp"
+#include "MarsEngine.hpp"
 
 // Atomic flag allows the signal handler to talk to the main loop safely
 std::atomic<bool> keepRunning(true);
@@ -67,8 +68,9 @@ int main(int argc, char* argv[]) {
     // 3. Initialize Core System
     // RAII pattern: The 'engine' object is created here.
     TargexCore engine(config); 
+    MarsEngine mars;
     // 2. Start Web Server
-    WebServer webServer(config, engine);
+    WebServer webServer(config, engine, mars);
     webServer.start(); // Runs in background thread
     
     try {
@@ -88,7 +90,7 @@ int main(int argc, char* argv[]) {
             // // B. Check Validity (using .is_null() from nlohmann library)
             if (!packetJson.is_null()) {
                 std::string debugStr = packetJson.dump();
-                Logger::debug("Asterix Packet to JSON: {}", debugStr );
+                // Logger::debug("Asterix Packet to JSON: {}", debugStr );
                 // C. Example Logic: Accessing Data
                 // Tshark -T ek structure is usually: { "layers": { "ip": { ... }, "udp": { ... } } }
                 webServer.broadcastPacket(packetJson.dump());
