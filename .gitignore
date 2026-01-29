@@ -7,3 +7,4 @@ logs/
 *.log
 .vscode/
 public/download.csv
+resources/*.p12

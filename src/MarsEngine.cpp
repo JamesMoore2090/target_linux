@@ -1,327 +1,366 @@
 #include "MarsEngine.hpp"
 #include "Logger.hpp"
 #include <iostream>
+#include <cstdio>
 #include <sstream>
 #include <cmath>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <ctime>
 #include <iomanip>
-#include <cstring>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <netdb.h> 
-#include <openssl/pkcs12.h>
-#include <openssl/err.h>
-#include <openssl/provider.h>
-#include <thread>
-#include <chrono> // For Timing Logs
+#include <unistd.h> 
+#include <fcntl.h> 
+#include <fstream> 
 
-const double SENSOR_LAT = 38.5134;
-const double SENSOR_LON = -77.3008;
+// OpenSSL Headers
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/pkcs12.h>
+#include <openssl/bio.h>
+#include <openssl/x509.h>
+#include <openssl/provider.h> // [NEW] Required for Legacy Provider
+
+// --- MATH CONSTANTS ---
+constexpr double EARTH_RADIUS_M = 6371000.0;
+constexpr double PI = 3.14159265358979323846;
+constexpr double NM_TO_M = 1852.0;
 
 // --- HELPERS ---
+double toRad(double deg) { return deg * PI / 180.0; }
+double toDeg(double rad) { return rad * 180.0 / PI; }
 
-static double parseJsonFloat(const nlohmann::json& val) {
-    try {
-        if (val.is_array() && !val.empty()) {
-            if (val[0].is_string()) return std::stod(val[0].get<std::string>());
-            if (val[0].is_number()) return val[0].get<double>();
-        }
-        if (val.is_string()) return std::stod(val.get<std::string>());
-        if (val.is_number()) return val.get<double>();
-    } catch (...) {}
-    return 0.0;
+std::string getIsoTime(int secondsOffset) {
+    std::time_t now = std::time(nullptr) + secondsOffset;
+    std::tm* t = std::gmtime(&now);
+    std::stringstream ss;
+    ss << std::put_time(t, "%Y-%m-%dT%H:%M:%SZ");
+    return ss.str();
 }
 
-static std::string getKeyStr(const nlohmann::json& ast, const std::string& suffix) {
-    std::string k1 = "asterix_asterix_" + suffix;
-    std::string k2 = "asterix_" + suffix;
-    if (ast.contains(k1)) return ast[k1].get<std::string>();
-    if (ast.contains(k2)) return ast[k2].get<std::string>();
-    return "";
+void polarToGeo(double sensorLat, double sensorLon, double rangeNm, double azDeg, double& outLat, double& outLon) {
+    double rngM = rangeNm * NM_TO_M;
+    double angDist = rngM / EARTH_RADIUS_M;
+    double lat1 = toRad(sensorLat);
+    double lon1 = toRad(sensorLon);
+    double brng = toRad(azDeg);
+    double lat2 = asin(sin(lat1) * cos(angDist) + cos(lat1) * sin(angDist) * cos(brng));
+    double lon2 = lon1 + atan2(sin(brng) * sin(angDist) * cos(lat1), cos(angDist) - sin(lat1) * sin(lat2));
+    outLat = toDeg(lat2);
+    outLon = toDeg(lon2);
 }
 
-static double getKeyFloat(const nlohmann::json& ast, const std::string& suffix) {
-    std::string k1 = "asterix_asterix_" + suffix;
-    std::string k2 = "asterix_" + suffix;
-    if (ast.contains(k1)) return parseJsonFloat(ast[k1]);
-    if (ast.contains(k2)) return parseJsonFloat(ast[k2]);
-    return 0.0;
-}
-
-static std::string getCurrentTimeISO(int secondsOffset = 0) {
-    time_t now;
-    time(&now);
-    now += secondsOffset;
-    struct tm tstruct;
-    char buf[80];
-    tstruct = *gmtime(&now);
-    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tstruct);
-    return std::string(buf);
-}
-
-// --- CLASS IMPLEMENTATION ---
-
-MarsEngine::MarsEngine() : m_sockFd(-1), m_sslCtx(nullptr), m_ssl(nullptr), m_connStatus("ready") {
+// --- CONSTRUCTOR/DESTRUCTOR ---
+MarsEngine::MarsEngine(AppConfig& config) : m_config(config) {
     SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();
+
+    // [FIX] LOAD LEGACY PROVIDER FOR OLD P12 FILES
     OSSL_PROVIDER_load(NULL, "legacy");
     OSSL_PROVIDER_load(NULL, "default");
 }
 
-MarsEngine::~MarsEngine() {
+MarsEngine::~MarsEngine() { 
+    stop(); 
     cleanupSSL();
-    if (m_sockFd >= 0) close(m_sockFd);
 }
 
-// --- FIX 1: FAST CLEANUP (Don't wait for polite goodbye) ---
+void MarsEngine::start() {
+    if (m_isRunning) return;
+    m_isRunning = true;
+    m_workerThread = std::thread(&MarsEngine::processLoop, this);
+    Logger::info("[MARS] Engine Started. Listening on interface: {}", m_config.interface);
+}
+
+void MarsEngine::stop() {
+    m_isRunning = false;
+    if (system("pkill -f 'tshark -l -n -i'") != 0) {} 
+    if (m_workerThread.joinable()) m_workerThread.join();
+    if (m_udpSock != -1) close(m_udpSock);
+    cleanupSSL();
+    Logger::info("[MARS] Engine Stopped.");
+}
+
+// --- SSL HELPERS ---
 void MarsEngine::cleanupSSL() {
-    if (m_ssl) { 
-        // Tell OpenSSL we are done, don't try to send/receive shutdown alerts
-        SSL_set_quiet_shutdown(m_ssl, 1); 
-        SSL_free(m_ssl); 
-        m_ssl = nullptr; 
-    }
-    if (m_sslCtx) { 
-        SSL_CTX_free(m_sslCtx); 
-        m_sslCtx = nullptr; 
-    }
+    if (m_ssl) { SSL_shutdown(m_ssl); SSL_free(m_ssl); m_ssl = nullptr; }
+    if (m_tcpSock != -1) { close(m_tcpSock); m_tcpSock = -1; }
+    if (m_sslCtx) { SSL_CTX_free(m_sslCtx); m_sslCtx = nullptr; }
+    m_tcpConnected = false;
 }
 
-void MarsEngine::updateConfig(const CoTConfig& newConfig) {
-    if (newConfig.ip == "239.2.3.1" && m_config.ip != "239.2.3.1" && !newConfig.clientP12Path.empty()) {
-        // preserve IP
-    } else {
-        m_config.ip = newConfig.ip;
-        m_config.port = newConfig.port;
-        m_config.protocol = newConfig.protocol;
+bool MarsEngine::setupSSLContext() {
+    if (m_sslCtx) SSL_CTX_free(m_sslCtx);
+    
+    // [FIX] Force TLS 1.2 Method (More compatible with TAK Server)
+    m_sslCtx = SSL_CTX_new(TLS_client_method());
+    SSL_CTX_set_min_proto_version(m_sslCtx, TLS1_2_VERSION);
+    
+    if (!m_sslCtx) {
+        Logger::error("[SSL] Failed to create SSL Context.");
+        return false;
     }
 
-    if (!newConfig.clientP12Path.empty()) {
-        m_config.clientP12Path = newConfig.clientP12Path;
-        m_config.clientPwd = newConfig.clientPwd;
-        m_config.trustP12Path = newConfig.trustP12Path;
-        m_config.trustPwd = newConfig.trustPwd;
+    std::ifstream f(m_config.ssl_client_cert);
+    if (!f.good()) {
+        Logger::error("[SSL] Certificate file NOT FOUND: '{}'. Please ensure it is in the run directory.", m_config.ssl_client_cert);
+        return false;
     }
 
-    if (m_config.protocol == "ssl" && (m_config.clientP12Path.empty() || m_config.trustP12Path.empty())) {
-        Logger::info("MARS: SSL Configured, waiting for certificates...");
-        return; 
+    FILE* fp = fopen(m_config.ssl_client_cert.c_str(), "rb");
+    if (!fp) {
+        Logger::error("[SSL] Could not read .p12 file: {}", m_config.ssl_client_cert);
+        return false;
     }
 
-    Logger::info("MARS: Applying Config (Proto: {}, IP: {})", m_config.protocol, m_config.ip);
-    initSocket(); 
-}
-
-void MarsEngine::updateStatus(const std::string& status) {
-    {
-        // Lock while writing to protect against the Web Server reading at the same time
-        std::lock_guard<std::mutex> lock(m_statusMutex);
-        m_connStatus = status;
-    }
-
-    // Call callback outside the lock to prevent deadlocks if the callback is slow
-    if (m_statusCallback) m_statusCallback(status);
-}
-
-// --- P12 LOADER (Unchanged, omitted for brevity but KEEP IT from previous step) ---
-// (Paste the 'loadP12' function from the previous turn here. It is robust and correct.)
-// ... (Include loadP12 here) ... 
-bool loadP12(SSL_CTX* ctx, const std::string& path, const std::string& pwd, bool isTrustStore) {
-    FILE* fp = fopen(path.c_str(), "rb");
-    if (!fp) { Logger::error("MARS: Could not open P12 file: {}", path); return false; }
     PKCS12* p12 = d2i_PKCS12_fp(fp, NULL);
     fclose(fp);
-    if (!p12) { Logger::error("MARS: Failed to parse P12."); return false; }
-    EVP_PKEY* pkey = nullptr; X509* cert = nullptr; STACK_OF(X509)* ca = nullptr;
-    if (!PKCS12_parse(p12, pwd.c_str(), &pkey, &cert, &ca)) {
-        Logger::error("MARS: Failed to decrypt P12."); PKCS12_free(p12); return false;
+
+    if (!p12) {
+        Logger::error("[SSL] Failed to parse .p12 file. (Legacy format?)");
+        return false;
+    }
+
+    EVP_PKEY* pkey = nullptr;
+    X509* cert = nullptr;
+    STACK_OF(X509)* ca = nullptr;
+
+    if (!PKCS12_parse(p12, m_config.ssl_client_pass.c_str(), &pkey, &cert, &ca)) {
+        // [DEBUG] Print actual OpenSSL error to help debug
+        unsigned long err = ERR_get_error();
+        char err_buf[256];
+        ERR_error_string_n(err, err_buf, sizeof(err_buf));
+        Logger::error("[SSL] Failed to decrypt .p12. OpenSSL Error: {}", err_buf);
+        
+        PKCS12_free(p12);
+        return false;
     }
     PKCS12_free(p12);
 
-    if (isTrustStore) {
-        X509_STORE* store = SSL_CTX_get_cert_store(ctx);
-        int count = 0;
-        if (cert) { X509_STORE_add_cert(store, cert); count++; }
-        if (ca) { for(int i=0; i<sk_X509_num(ca); i++) { X509_STORE_add_cert(store, sk_X509_value(ca, i)); count++; } }
-        Logger::info("MARS: Loaded {} CA certificates.", count);
-        return true;
+    if (SSL_CTX_use_certificate(m_sslCtx, cert) != 1 || SSL_CTX_use_PrivateKey(m_sslCtx, pkey) != 1) {
+        Logger::error("[SSL] Failed to attach cert/key to Context.");
+        return false;
     }
-
-    if (cert) {
-        char subj[256]; X509_NAME_oneline(X509_get_subject_name(cert), subj, 256);
-        Logger::info("MARS: Loaded Identity: {}", subj);
-        SSL_CTX_use_certificate(ctx, cert);
-    }
-    if (pkey) SSL_CTX_use_PrivateKey(ctx, pkey);
-    if (ca) { for(int i=0; i<sk_X509_num(ca); i++) SSL_CTX_add_extra_chain_cert(ctx, X509_dup(sk_X509_value(ca, i))); }
-
-    if (!SSL_CTX_check_private_key(ctx)) { Logger::error("MARS: Key/Cert Mismatch!"); return false; }
+    
+    Logger::info("[SSL] Loaded Identity: {}", m_config.ssl_client_cert);
     return true;
 }
 
-// --- INITIALIZATION (With Timing Logs) ---
-void MarsEngine::initSocket() {
-    auto t1 = std::chrono::steady_clock::now(); // Start Timer
+// --- CONNECTION MANAGER ---
+void MarsEngine::manageTcpConnection() {
+    if (!m_config.send_tak_tracks && !m_config.send_sensor_pos) {
+        if (m_tcpConnected) {
+            Logger::info("[MARS] Output disabled. Disconnecting...");
+            cleanupSSL();
+        }
+        return; 
+    }
 
-    cleanupSSL();
-    if (m_sockFd >= 0) { close(m_sockFd); m_sockFd = -1; }
-    updateStatus("connecting");
+    if (m_config.cot_ip != m_currentHost || m_config.cot_port != m_currentPort) {
+        if (m_tcpConnected) {
+            Logger::info("[MARS] Config changed, reconnecting...");
+            cleanupSSL();
+        }
+        m_currentHost = m_config.cot_ip;
+        m_currentPort = m_config.cot_port;
+    }
 
+    if (m_tcpConnected) return;
+
+    auto now = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::seconds>(now - m_lastTcpAttempt).count() < 5) return;
+    m_lastTcpAttempt = now;
+
+    bool useSSL = (m_config.cot_protocol == "ssl");
+    if (useSSL && !m_sslCtx) {
+        if (!setupSSLContext()) {
+             return; 
+        }
+    }
+
+    Logger::info("[MARS] Connecting to {}:{} ({})...", m_currentHost, m_currentPort, useSSL ? "SSL" : "TCP");
+    
+    m_tcpSock = socket(AF_INET, SOCK_STREAM, 0);
+    if (m_tcpSock < 0) return;
+
+    struct timeval timeout; timeout.tv_sec = 2; timeout.tv_usec = 0;
+    setsockopt(m_tcpSock, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(m_config.port);
+    serv_addr.sin_port = htons(m_currentPort);
+    inet_pton(AF_INET, m_currentHost.c_str(), &serv_addr.sin_addr);
 
-    if (inet_pton(AF_INET, m_config.ip.c_str(), &serv_addr.sin_addr) <= 0) {
-        Logger::error("MARS: Invalid IP Address");
-        updateStatus("failed");
+    if (connect(m_tcpSock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+        Logger::error("[MARS] TCP Connection Failed.");
+        close(m_tcpSock); m_tcpSock = -1;
         return;
     }
 
-    if (m_config.protocol == "udp") {
-        if ((m_sockFd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) return;
-        updateStatus("ready");
-    } 
-    else if (m_config.protocol == "tcp" || m_config.protocol == "ssl") {
+    if (useSSL) {
+        m_ssl = SSL_new(m_sslCtx);
+        SSL_set_fd(m_ssl, m_tcpSock);
         
-        // 1. Create Socket
-        if ((m_sockFd = socket(AF_INET, SOCK_STREAM, 0)) < 0) return;
-
-        // 2. Connect TCP (LOG TIMING)
-        Logger::info("MARS: Attempting TCP Connect...");
-        if (connect(m_sockFd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-            Logger::error("MARS: TCP Connect Failed");
-            updateStatus("failed");
+        if (SSL_connect(m_ssl) <= 0) {
+            unsigned long err = ERR_get_error();
+            char err_buf[256];
+            ERR_error_string_n(err, err_buf, sizeof(err_buf));
+            Logger::error("[MARS] SSL Handshake Failed: {}", err_buf);
+            
+            cleanupSSL();
             return;
         }
-        
-        auto t2 = std::chrono::steady_clock::now();
-        Logger::info("MARS: TCP Connected (took {}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count());
-
-        if (m_config.protocol == "ssl") {
-            Logger::info("MARS: Starting SSL Handshake...");
-            if (!initSSL()) {
-                updateStatus("failed");
-                close(m_sockFd);
-                m_sockFd = -1;
-                return;
-            }
-            auto t3 = std::chrono::steady_clock::now();
-            Logger::info("MARS: SSL Handshake Complete (took {}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(t3 - t2).count());
-        }
-        
-        updateStatus("connected");
-
-        // HEARTBEAT
-        std::thread([this]() {
-            while (m_connStatus == "connected") {
-                std::string now = getCurrentTimeISO(0);
-                std::string stale = getCurrentTimeISO(120);
-                std::stringstream hb;
-                hb << "<event version=\"2.0\" uid=\"TARGEX-HEARTBEAT\" type=\"a-f-G-E-V\" "
-                   << "time=\"" << now << "\" start=\"" << now << "\" stale=\"" << stale << "\" how=\"h-g-i-g-o\">"
-                   << "<point lat=\"" << SENSOR_LAT << "\" lon=\"" << SENSOR_LON << "\" hae=\"0.0\" ce=\"999\" le=\"999\"/>"
-                   << "<detail><status readiness=\"true\"/></detail></event>";
-                this->sendData(hb.str());
-                sleep(15);
-            }
-        }).detach();
-    }
-}
-
-bool MarsEngine::initSSL() {
-    m_sslCtx = SSL_CTX_new(TLS_client_method());
-    if (!m_sslCtx) return false;
-
-    if (!m_config.clientP12Path.empty()) {
-        if (!loadP12(m_sslCtx, m_config.clientP12Path, m_config.clientPwd, false)) return false;
-    }
-    if (!m_config.trustP12Path.empty()) {
-        if (!loadP12(m_sslCtx, m_config.trustP12Path, m_config.trustPwd, true)) return false;
-    }
-
-    m_ssl = SSL_new(m_sslCtx);
-    SSL_set_fd(m_ssl, m_sockFd);
-    
-    // Handshake
-    if (SSL_connect(m_ssl) <= 0) {
-        Logger::error("MARS: SSL Handshake Failed. (Check Certificates)");
-        ERR_print_errors_fp(stderr);
-        return false;
-    }
-    return true;
-}
-
-void MarsEngine::sendData(const std::string& data) {
-    if (m_config.protocol == "ssl" && m_ssl) {
-        SSL_write(m_ssl, data.c_str(), data.size());
-    } else if (m_sockFd >= 0) {
-        if (m_config.protocol == "udp") {
-            struct sockaddr_in dest;
-            dest.sin_family = AF_INET;
-            dest.sin_port = htons(m_config.port);
-            inet_pton(AF_INET, m_config.ip.c_str(), &dest.sin_addr);
-            sendto(m_sockFd, data.c_str(), data.size(), 0, (struct sockaddr*)&dest, sizeof(dest));
-        } else {
-            send(m_sockFd, data.c_str(), data.size(), 0);
-        }
-    }
-}
-
-void MarsEngine::processAndSend(const nlohmann::json& packet) {
-    if (!packet.contains("layers") || !packet["layers"].contains("asterix")) return;
-    std::string cotXml = generateCoT(packet["layers"]["asterix"]);
-    if (!cotXml.empty()) sendData(cotXml);
-}
-
-MarsEngine::GeoPoint MarsEngine::calculateLatLon(double rangeNM, double bearingDeg) {
-    const double R = 3440.065; 
-    double lat1 = SENSOR_LAT * (M_PI / 180.0);
-    double lon1 = SENSOR_LON * (M_PI / 180.0);
-    double brng = bearingDeg * (M_PI / 180.0);
-    double dr = rangeNM / R;
-    double lat2 = asin(sin(lat1)*cos(dr) + cos(lat1)*sin(dr)*cos(brng));
-    double lon2 = lon1 + atan2(sin(brng)*sin(dr)*cos(lat1), cos(dr)-sin(lat1)*sin(lat2));
-    return { lat2 * (180.0 / M_PI), lon2 * (180.0 / M_PI) };
-}
-
-std::string MarsEngine::generateCoT(const nlohmann::json& ast) {
-    std::string trackId = getKeyStr(ast, "048_161_TN");
-    if (trackId.empty()) trackId = getKeyStr(ast, "034_161_TN");
-    if (trackId.empty()) trackId = "UNK";
-    if (trackId.front() == '[') {
-        size_t end = trackId.find(',');
-        if (end == std::string::npos) end = trackId.find(']');
-        if (end != std::string::npos) trackId = trackId.substr(1, end - 1);
-    }
-
-    double lat = 0.0, lon = 0.0;
-    bool validPos = false;
-    double cat34Lat = getKeyFloat(ast, "034_120_LAT");
-    double cat34Lon = getKeyFloat(ast, "034_120_LON");
-    
-    if (cat34Lat != 0.0 || cat34Lon != 0.0) {
-        lat = cat34Lat; lon = cat34Lon; validPos = true;
+        Logger::info("[MARS] SSL Handshake Success!");
     } else {
-        double rho = getKeyFloat(ast, "048_040_RHO");
-        double theta = getKeyFloat(ast, "048_040_THETA");
-        if (ast.contains("asterix_asterix_048_040_RHO") || ast.contains("asterix_048_040_RHO")) {
-            GeoPoint p = calculateLatLon(rho, theta);
-            lat = p.lat; lon = p.lon; validPos = true;
-        }
+        Logger::info("[MARS] TCP Connected.");
     }
 
-    if (!validPos) return "";
+    m_tcpConnected = true;
+}
 
-    // --- UPDATED TIMESTAMP (Future Stale) ---
-    std::string now = getCurrentTimeISO(0);
-    std::string stale = getCurrentTimeISO(120);
+// --- SEND HELPER ---
+void MarsEngine::sendToTak(const std::string& xml) {
+    if (!m_config.send_tak_tracks && !m_config.send_sensor_pos) return;
 
-    std::stringstream ss;
-    ss << "<event version=\"2.0\" uid=\"TARGEX-" << trackId << "\" type=\"a-u-S\" " 
-       << "time=\"" << now << "\" start=\"" << now << "\" stale=\"" << stale << "\" how=\"m-g\">"
-       << "<point lat=\"" << lat << "\" lon=\"" << lon << "\" hae=\"0.0\" ce=\"10.0\" le=\"10.0\"/>"
-       << "<detail><contact callsign=\"TRK-" << trackId << "\"/><remarks>Sea Surface</remarks></detail></event>";
-    return ss.str();
+    if (m_config.cot_protocol == "tcp" || m_config.cot_protocol == "ssl") {
+        manageTcpConnection();
+        
+        if (m_tcpConnected) {
+            std::string payload = xml + "\n";
+            int ret = -1;
+
+            if (m_config.cot_protocol == "ssl" && m_ssl) {
+                ret = SSL_write(m_ssl, payload.c_str(), payload.length());
+            } else {
+                ret = send(m_tcpSock, payload.c_str(), payload.length(), 0);
+            }
+            
+            if (ret <= 0) {
+                Logger::error("[MARS] Send failed. Reconnecting...");
+                cleanupSSL(); 
+            }
+        }
+    } 
+    else {
+        struct sockaddr_in udpAddr;
+        memset(&udpAddr, 0, sizeof(udpAddr));
+        udpAddr.sin_family = AF_INET;
+        udpAddr.sin_port = htons(m_config.cot_port);
+        inet_pton(AF_INET, m_config.cot_ip.c_str(), &udpAddr.sin_addr);
+        sendto(m_udpSock, xml.c_str(), xml.length(), 0, (struct sockaddr*)&udpAddr, sizeof(udpAddr));
+    }
+}
+
+// --- PROCESS LOOP ---
+void MarsEngine::processLoop() {
+    m_udpSock = socket(AF_INET, SOCK_DGRAM, 0);
+    char loop=1; setsockopt(m_udpSock, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
+    unsigned char ttl=64; setsockopt(m_udpSock, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+    int bcast=1; setsockopt(m_udpSock, SOL_SOCKET, SO_BROADCAST, &bcast, sizeof(bcast));
+
+    int sockAst = socket(AF_INET, SOCK_DGRAM, 0);
+    setsockopt(sockAst, SOL_SOCKET, SO_BROADCAST, &bcast, sizeof(bcast));
+    struct sockaddr_in astAddr;
+
+    std::string filter = "udp port " + std::to_string(m_config.rx_port);
+    std::string cmd = "tshark -l -n -i " + m_config.interface + " -f \"" + filter + "\" "
+                      "-T ek -d udp.port==" + std::to_string(m_config.rx_port) + ",asterix";
+
+    Logger::info("[MARS] Launching Tshark: {}", cmd);
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) { Logger::error("[MARS] Failed to start Tshark!"); return; }
+
+    char buffer[65536];
+    auto lastOriginCoT = std::chrono::steady_clock::now();
+
+    while (m_isRunning && pipe) {
+        memset(&astAddr, 0, sizeof(astAddr)); 
+        astAddr.sin_family=AF_INET; 
+        astAddr.sin_port=htons(m_config.asterix_port); 
+        inet_pton(AF_INET, m_config.asterix_ip.c_str(), &astAddr.sin_addr);
+
+        if(m_config.cot_protocol != "udp") manageTcpConnection();
+
+        if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            try {
+                if (m_config.send_asterix) {
+                     std::string jsonStr(buffer);
+                     sendto(sockAst, jsonStr.c_str(), jsonStr.length(), 0, (struct sockaddr*)&astAddr, sizeof(astAddr));
+                }
+
+                nlohmann::json raw = nlohmann::json::parse(buffer);
+                if (!raw.contains("layers") || !raw["layers"].contains("asterix")) continue;
+
+                {
+                    std::lock_guard<std::mutex> lock(m_queueMutex);
+                    m_webQueue.push_back(raw);
+                    if(m_webQueue.size() > 500) m_webQueue.pop_front();
+                }
+
+                auto ast = raw["layers"]["asterix"];
+                std::string id = "";
+                double lat=0, lon=0, rho=-1, theta=0;
+                bool isGeo=false, isPolar=false;
+
+                for (auto& [key, val] : ast.items()) {
+                    if (key.find("120_LAT")!=std::string::npos) { lat=val.is_string()?std::stod(val.get<std::string>()):val.get<double>(); isGeo=true; }
+                    if (key.find("120_LON")!=std::string::npos) { lon=val.is_string()?std::stod(val.get<std::string>()):val.get<double>(); isGeo=true; }
+                    if (key.find("040_RHO")!=std::string::npos) { rho=val.is_string()?std::stod(val.get<std::string>()):val.get<double>(); isPolar=true; }
+                    if (key.find("040_THETA")!=std::string::npos) { theta=val.is_string()?std::stod(val.get<std::string>()):val.get<double>(); isPolar=true; }
+                    if (key.find("161_TN")!=std::string::npos) {
+                        if(val.is_number()) id=std::to_string(val.get<int>());
+                        else if(val.is_string()) id=val.get<std::string>();
+                    }
+                }
+
+                if (isGeo && (id.empty() || id == "0")) {
+                    m_sensorLat = lat; m_sensorLon = lon; m_hasOrigin = true;
+                }
+
+                if (m_config.send_tak_tracks && !id.empty()) {
+                    double trkLat=0, trkLon=0; 
+                    bool ready=false;
+                    if (isGeo) { trkLat=lat; trkLon=lon; ready=true; }
+                    else if (isPolar && m_hasOrigin && rho>=0) { 
+                        polarToGeo(m_sensorLat, m_sensorLon, rho, theta, trkLat, trkLon); 
+                        ready=true; 
+                    }
+                    if (ready) {
+                        std::stringstream xml;
+                        xml << "<event version='2.0' uid='TRK-" << id << "' type='a-u-G' how='m-g' time='" << getIsoTime(0) << "' start='" << getIsoTime(0) << "' stale='" << getIsoTime(5) << "'>"
+                            << "<point lat='" << trkLat << "' lon='" << trkLon << "' hae='0' ce='25' le='25'/>"
+                            << "<detail><contact callsign='Track " << id << "'/></detail></event>";
+                        sendToTak(xml.str());
+                    }
+                }
+            } catch (...) {}
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+
+        if (m_config.send_sensor_pos && m_hasOrigin) {
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - lastOriginCoT).count() >= 10) {
+                std::stringstream xml;
+                xml << "<event version='2.0' uid='SENSOR-ORIGIN' type='a-f-G-U-C' how='m-g' time='" << getIsoTime(0) << "' start='" << getIsoTime(0) << "' stale='" << getIsoTime(20) << "'>"
+                    << "<point lat='" << m_sensorLat << "' lon='" << m_sensorLon << "' hae='0' ce='10' le='10'/>"
+                    << "<detail><contact callsign='ASTERIX SENSOR'/></detail></event>";
+                sendToTak(xml.str());
+                lastOriginCoT = now;
+            }
+        }
+    }
+    pclose(pipe);
+    cleanupSSL();
+    close(sockAst);
+}
+
+std::vector<nlohmann::json> MarsEngine::pollData() {
+    std::lock_guard<std::mutex> lock(m_queueMutex);
+    if (m_webQueue.empty()) return {};
+    std::vector<nlohmann::json> batch(m_webQueue.begin(), m_webQueue.end());
+    m_webQueue.clear();
+    return batch;
 }

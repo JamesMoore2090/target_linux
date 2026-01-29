@@ -18,16 +18,23 @@ struct AppConfig {
     int rx_port = 8600;
     std::string multicast_group;
 
-    // Output (CoT / TAK) -- [ADDED THESE TO FIX ERROR]
     bool isEnabled = true;
     std::string destination; // File output path
     
+    // Output (CoT / TAK)
     std::string cot_ip = "239.2.3.1";
     int cot_port = 6969;
     std::string cot_protocol = "udp"; 
 
-    // [NEW] Logic Flag
-    bool send_sensor_pos = true;
+    // Asterix Output [NEW]
+    
+    std::string asterix_ip = "127.0.0.1";
+    int asterix_port = 50010;
+
+    // Toggles
+    bool send_sensor_pos = false; // Send the Origin Point (Green Dot)
+    bool send_tak_tracks = false; // [NEW] Send the actual Cat 48 Tracks
+    bool send_asterix = false; // send ASterix
 
     // SSL Configuration [NEW]
     std::string ssl_client_cert;

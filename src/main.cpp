@@ -11,6 +11,7 @@
 #include "Logger.hpp"
 #include "ConfigLoader.hpp"
 #include "WebServer.hpp"
+#include "MarsEngine.hpp"
 
 std::atomic<bool> keepRunning(true);
 
@@ -44,7 +45,8 @@ int main(int argc, char* argv[]) {
 
     // 1. Create Core Systems
     TargexCore engine(config); 
-    WebServer webServer(config, engine);
+    MarsEngine processor(config);
+    WebServer webServer(config, processor);
     
     try {
         if (!engine.initialize()) {
@@ -54,6 +56,7 @@ int main(int argc, char* argv[]) {
 
         // 2. Start Everything
         engine.startCapture();
+        processor.start();
         webServer.start(); 
 
         Logger::info("System Ready. Web Interface available at http://localhost:{}", config.rx_port_web);

@@ -1,73 +1,69 @@
 #ifndef MARS_ENGINE_HPP
 #define MARS_ENGINE_HPP
 
+#include "ConfigLoader.hpp"
 #include <string>
 #include <vector>
-#include <functional>
-#include <nlohmann/json.hpp>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#include <deque>
+#include <mutex>
 #include <atomic>
-#include <mutex> // <--- ADDED
+#include <thread>
+#include <nlohmann/json.hpp>
 
-struct CoTConfig {
-    std::string ip = "239.2.3.1";
-    int port = 6969;
-    std::string protocol = "udp"; // udp, tcp, ssl
-    
-    // SSL Certs
-    std::string clientP12Path;
-    std::string clientPwd;
-    std::string trustP12Path;
-    std::string trustPwd;
-};
+// OpenSSL Forward Declarations (Avoids pulling heavy headers here)
+typedef struct ssl_st SSL;
+typedef struct ssl_ctx_st SSL_CTX;
 
 class MarsEngine {
 public:
-    using StatusCallback = std::function<void(std::string)>;
-
-    MarsEngine();
+    MarsEngine(AppConfig& config);
     ~MarsEngine();
 
-    void updateConfig(const CoTConfig& config);
-    void processAndSend(const nlohmann::json& packet);
+    void start();
+    void stop();
     
-    // Thread-Safe Setter
-    void setStatusCallback(StatusCallback cb) { 
-        std::lock_guard<std::mutex> lock(m_statusMutex);
-        m_statusCallback = cb; 
-    }
-
-    // Thread-Safe Getter (THE FIX)
-    std::string getConnectionStatus() const { 
-        std::lock_guard<std::mutex> lock(m_statusMutex);
-        return m_connStatus; 
-    }
+    // API for WebServer to get visualization data
+    std::vector<nlohmann::json> pollData();
+    // Status Getter
+    bool isTcpConnected() const { return m_tcpConnected; }
 
 private:
-    struct GeoPoint { double lat; double lon; };
+    void processLoop();
+    // Helper to route packets based on Protocol (UDP/TCP)
+    void sendToTak(const std::string& xml);
+    
+    //  Manages TCP Reconnection logic
+    void manageTcpConnection();
 
-    void initSocket();
-    bool initSSL();
+    // Helper to load .p12 files
+    bool setupSSLContext();
     void cleanupSSL();
-    void sendData(const std::string& data);
-    std::string generateCoT(const nlohmann::json& ast);
-    GeoPoint calculateLatLon(double rangeNM, double bearingDeg);
-    
-    // Thread-Safe Internal Setter
-    void updateStatus(const std::string& status);
 
-    int m_sockFd;
-    CoTConfig m_config;
-    
-    // SSL Handles
-    SSL_CTX* m_sslCtx;
-    SSL* m_ssl;
+    AppConfig& m_config;
+    std::atomic<bool> m_isRunning{false};
+    std::thread m_workerThread;
 
-    // Status State
-    std::string m_connStatus;
-    StatusCallback m_statusCallback;
-    mutable std::mutex m_statusMutex; // <--- THE MUTEX
+    // Thread-safe buffer for the Web Interface
+    std::deque<nlohmann::json> m_webQueue;
+    std::mutex m_queueMutex;
+    
+    // State for CoT Generation
+    double m_sensorLat = 0.0;
+    double m_sensorLon = 0.0;
+    bool m_hasOrigin = false;
+    // --- NETWORKING STATE ---
+    int m_udpSock = -1;
+    int m_tcpSock = -1;
+    bool m_tcpConnected = false;
+    std::chrono::steady_clock::time_point m_lastTcpAttempt;
+
+    // SSL State
+    SSL_CTX* m_sslCtx = nullptr;
+    SSL* m_ssl = nullptr;
+    
+    // To detect config changes
+    std::string m_currentHost = "";
+    int m_currentPort = 0;
 };
 
 #endif

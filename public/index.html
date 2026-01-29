@@ -13,81 +13,135 @@
             margin: 0; padding: 0; background: #111; 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
             overflow: hidden; 
-            display: flex; 
+            display: flex; /* Flex layout is key here */
             height: 100vh; 
         }
         
-        /* --- SIDEBARS --- */
+        /* SIDEBARS */
         .sidebar { background: #1e1e1e; border-color: #333; color: #ccc; display: flex; flex-direction: column; z-index: 1000; }
-        #sidebar-left { width: 300px; min-width: 300px; border-right: 1px solid #333; }
-        #sidebar-right { width: 380px; min-width: 380px; border-left: 1px solid #333; }
+        
+        /* Fixed width for Left Sidebar */
+        #sidebar-left { width: 340px; min-width: 340px; border-right: 1px solid #333; overflow-y: auto; } 
 
-        /* --- HEADERS & SECTIONS --- */
+        /* MAP takes up all remaining space */
+        #map { flex-grow: 1; height: 100%; background: #000; z-index: 1; }
+
+        /* WIDGET STYLES (Kept unchanged) */
         .sidebar-header { padding: 15px; background: #252526; border-bottom: 2px solid #007acc; }
         .sidebar-header h2 { margin: 0; color: #00ff00; font-size: 20px; letter-spacing: 1px; }
         .sidebar-header span { font-size: 10px; color: #888; text-transform: uppercase; }
         .section { padding: 12px 15px; border-bottom: 1px solid #333; }
         .section-title { font-size: 11px; font-weight: bold; color: #007acc; margin-bottom: 8px; text-transform: uppercase; }
-
-        /* --- WIDGETS --- */
+        .divider-title { margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; font-size: 11px; font-weight: bold; color: #007acc; text-transform: uppercase; margin-bottom: 8px; }
         .status-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px; }
         .status-val { font-family: monospace; color: #fff; }
         .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
         .green { background: #00ff00; box-shadow: 0 0 5px #00ff00; }
         .red { background: #ff0000; box-shadow: 0 0 5px #ff0000; }
-        
         .input-group { margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
         .input-group label { font-size: 11px; color: #888; flex-grow: 1; }
-        .input-group input, .input-group select { 
-            width: 140px; background: #333; border: 1px solid #444; 
-            color: #fff; padding: 4px; font-size: 12px; 
-        }
-        .input-group input[type="file"] { border:none; background:transparent; width: 100%; font-size:10px; }
+        .input-group input, .input-group select { width: 140px; background: #333; border: 1px solid #444; color: #fff; padding: 4px; font-size: 12px; text-align: right; }
+        .input-group input[type="file"] { border:none; background:transparent; width: 100%; font-size:10px; text-align: left;}
         
-        .btn { width: 100%; padding: 8px; cursor: pointer; border: none; font-weight: bold; background: #007acc; color: white; margin-top: 5px; font-size: 12px; }
+        /* TOGGLE SWITCH STYLES */
+        .toggle-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; background: #252526; padding: 8px; border-radius: 4px; border: 1px solid #333; }
+        .toggle-switch { position: relative; width: 40px; height: 20px; border-radius: 10px; cursor: pointer; transition: background 0.3s; }
+        .toggle-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: transform 0.3s; box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
+        .toggle-switch[data-state="off"] { background: #ff3333; }
+        .toggle-switch[data-state="off"] .toggle-knob { transform: translateX(0); }
+        .toggle-switch[data-state="pending"] { background: #ffaa00; }
+        .toggle-switch[data-state="pending"] .toggle-knob { transform: translateX(10px); }
+        .toggle-switch[data-state="on"] { background: #00cc44; }
+        .toggle-switch[data-state="on"] .toggle-knob { transform: translateX(20px); }
+
+        .btn { width: 100%; padding: 6px; cursor: pointer; border: none; font-weight: bold; background: #007acc; color: white; margin-top: 5px; font-size: 11px; }
         .btn:hover { background: #0099ff; }
         .btn-nav { background: #444; margin-bottom: 5px; }
 
-        /* --- SSL PANEL --- */
-        #ssl-panel { 
-            display: none; /* Hidden by default */
-            background: #252526; 
-            border: 1px dashed #444; 
-            padding: 10px; 
-            margin-bottom: 10px; 
-        }
-        .sub-label { display: block; font-size: 10px; color: #aaa; margin-top: 5px; margin-bottom: 2px;}
-
-        /* --- LOG WINDOW --- */
-        #log-section { flex-grow: 1; display: flex; flex-direction: column; background: #111; border-top: 1px solid #444; overflow: hidden; }
-        .tabs { display: flex; background: #252526; border-bottom: 1px solid #333; }
-        .tab { flex: 1; text-align: center; padding: 8px; font-size: 11px; cursor: pointer; color: #888; background: #252526; border: none; border-bottom: 2px solid transparent; }
-        .tab.active { color: #fff; background: #1e1e1e; border-bottom: 2px solid #007acc; font-weight: bold; }
-        #log-content { flex-grow: 1; padding: 10px; font-family: 'Consolas', monospace; font-size: 11px; overflow-y: auto; color: #0f0; white-space: pre-wrap; }
-        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #222; padding-bottom: 2px; }
-        #map { flex-grow: 1; height: 100%; background: #000; z-index: 1; }
+        #ssl-panel { display: none; background: #252526; border: 1px dashed #444; padding: 10px; margin-bottom: 10px; }
+        .mil-icon { background: transparent; border: none; }
     </style>
 </head>
 <body>
 
     <div id="sidebar-left" class="sidebar">
+        
         <div class="sidebar-header"><h2>TARGEX</h2><span>Production Control</span></div>
+
         <div class="section">
             <div class="section-title">System Status</div>
             <div class="status-row"><span>Server Link</span><span class="status-val"><span id="ws-ind" class="indicator red"></span><span id="ws-text">Offline</span></span></div>
             <div class="status-row"><span>Packets RX</span><span class="status-val" id="pkt-count" style="color: #00ff00;">0</span></div>
-            <div class="status-row"><span>Active Tracks</span><span class="status-val" id="trk-count">0</span></div>
+            <div class="status-row"><span>Active Tracks</span><span class="status-val" id="trk-count" style="color: #fff;">0</span></div>
         </div>
+
         <div class="section">
             <div class="section-title">Sensor Origin (Cat 34)</div>
             <div class="input-group"><label>Latitude</label><input type="number" step="0.0001" id="sensor-lat" value="0.0000"></div>
             <div class="input-group"><label>Longitude</label><input type="number" step="0.0001" id="sensor-lon" value="0.0000"></div>
-            <div style="font-size:10px; color:#666; text-align:right; font-style:italic; margin-bottom:10px;" id="origin-status">Waiting for Cat 34...</div>
-            <div style="border-top: 1px solid #333; padding-top: 10px; display:flex; align-items:center;">
-                <input type="checkbox" id="send-origin" checked style="width:auto; margin-right:8px;">
-                <label for="send-origin" style="font-size:11px; color:#ccc; cursor:pointer;">Transmit Origin via CoT</label>
+            <div style="font-size:10px; color:#666; text-align:right; font-style:italic;" id="origin-status">Waiting for Cat 34...</div>
+        </div>
+
+        <div class="sidebar-header" style="border-bottom-color: #ff9900; margin-top: 10px;"><h2 style="color:#ff9900;">CONFIG</h2><span>Network</span></div>
+        
+        <div class="section">
+            <div class="input-group"><label>Input Port (RX)</label><input type="number" id="rx-port" value="8600"></div>
+            <button class="btn" onclick="saveNetConfig()">APPLY INPUT SETTINGS</button>
+
+            <div class="divider-title">TAK Output Configuration</div>
+            <div id="tak-settings">
+                <div class="input-group"><label>CoT IP</label><input type="text" id="cot-ip" value="239.2.3.1"></div>
+                <div class="input-group"><label>CoT Port</label><input type="number" id="cot-port" value="6969"></div>
+                <div class="input-group">
+                    <label>Protocol</label>
+                    <div style="display:flex; align-items:center;">
+                        <span id="conn-dot" class="indicator green" style="margin-right:8px;" title="Status"></span>
+                        <select id="cot-proto" onchange="toggleSSL()">
+                            <option value="udp">UDP</option>
+                            <option value="tcp">TCP</option>
+                            <option value="ssl">SSL</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="ssl-panel">
+                    <div class="section-title" style="color:#aaa;">Certificates</div>
+                    <input type="file" id="ssl-client-cert" style="width:100%; font-size:10px;">
+                    <input type="password" id="ssl-client-pass" placeholder="Cert Password" style="width:95%;">
+                    <input type="file" id="ssl-trust-store" style="width:100%; font-size:10px; margin-top:5px;">
+                    <input type="password" id="ssl-trust-pass" placeholder="Trust Password" style="width:95%;">
+                </div>
+                <button class="btn" onclick="saveNetConfig()">APPLY TAK SETTINGS</button>
+            </div>
+
+            <div style="margin-top:15px;">
+                <div class="toggle-container">
+                    <span style="font-size:11px; font-weight:bold; color:#ccc;">Output Tracks (TAK)</span>
+                    <div id="tgl-tak" class="toggle-switch" data-state="off" onclick="handleToggle('tak')">
+                        <div class="toggle-knob"></div>
+                    </div>
+                </div>
+                <div class="toggle-container">
+                    <span style="font-size:11px; font-weight:bold; color:#ccc;">Transmit Origin (CoT)</span>
+                    <div id="tgl-origin" class="toggle-switch" data-state="off" onclick="handleToggle('origin')">
+                        <div class="toggle-knob"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="divider-title">Asterix Output Configuration</div>
+            <div class="input-group"><label>Target IP</label><input type="text" id="ast-ip" value="10.10.10.10"></div>
+            <div class="input-group"><label>Target Port</label><input type="number" id="ast-port" value="50010"></div>
+            <button class="btn" onclick="saveNetConfig()">APPLY ASTERIX SETTINGS</button>
+
+            <div class="toggle-container" style="margin-top:10px;">
+                <span style="font-size:11px; font-weight:bold; color:#ccc;">Forward Asterix</span>
+                <div id="tgl-ast" class="toggle-switch" data-state="off" onclick="handleToggle('ast')">
+                    <div class="toggle-knob"></div>
+                </div>
             </div>
         </div>
+
         <div style="margin-top:auto; padding:15px; border-top:1px solid #333;">
             <button class="btn btn-nav" onclick="location.href='/log'">VIEW FULL LIVE LOG</button>
             <button class="btn btn-nav" onclick="location.href='/files'">OPEN FILE MANAGER</button>
@@ -96,57 +150,20 @@
 
     <div id="map"></div>
 
-    <div id="sidebar-right" class="sidebar">
-        <div class="sidebar-header" style="border-bottom-color: #ff9900;"><h2 style="color:#ff9900;">CONFIG</h2><span>Network & Diagnostics</span></div>
-        
-        <div class="section">
-            <div class="section-title">Data Output Configuration</div>
-            <div class="input-group"><label>Input Port (RX)</label><input type="number" id="rx-port" value="8600"></div>
-            <div class="input-group"><label>CoT IP</label><input type="text" id="cot-ip" value="239.2.3.1"></div>
-            <div class="input-group"><label>CoT Port</label><input type="number" id="cot-port" value="6969"></div>
-            
-            <div class="input-group">
-                <label>Protocol</label>
-                <select id="cot-proto" onchange="toggleSSL()">
-                    <option value="udp">UDP</option>
-                    <option value="tcp">TCP</option>
-                    <option value="ssl">SSL (TAK Server)</option>
-                </select>
-            </div>
-
-            <div id="ssl-panel">
-                <div class="section-title" style="color:#aaa;">Certificates (.p12)</div>
-                
-                <span class="sub-label">Client Certificate</span>
-                <input type="file" id="ssl-client-cert" accept=".p12">
-                <input type="password" id="ssl-client-pass" placeholder="Password" style="width:95%; margin-top:3px;">
-                
-                <span class="sub-label" style="margin-top:8px;">Trust Store</span>
-                <input type="file" id="ssl-trust-store" accept=".p12">
-                <input type="password" id="ssl-trust-pass" placeholder="Password" style="width:95%; margin-top:3px;">
-            </div>
-            
-            <button class="btn" onclick="applyConfig()">APPLY CONFIGURATION</button>
-        </div>
-
-        <div id="log-section">
-            <div class="tabs">
-                <div class="tab active" onclick="setTab('logs')">SERVER LOGS</div>
-                <div class="tab" onclick="setTab('data')">ASTERIX RAW</div>
-            </div>
-            <div id="log-content">Initializing...</div>
-        </div>
-    </div>
-
     <script>
         // --- GLOBAL STATE ---
         const ui = {
             wsInd: document.getElementById('ws-ind'), wsText: document.getElementById('ws-text'),
             pktCount: document.getElementById('pkt-count'), trkCount: document.getElementById('trk-count'),
-            log: document.getElementById('log-content'), latInput: document.getElementById('sensor-lat'),
-            lonInput: document.getElementById('sensor-lon'), originStatus: document.getElementById('origin-status')
+            latInput: document.getElementById('sensor-lat'),
+            lonInput: document.getElementById('sensor-lon'), originStatus: document.getElementById('origin-status'),
+            tglTak: document.getElementById('tgl-tak'),
+            tglOrigin: document.getElementById('tgl-origin'),
+            tglAst: document.getElementById('tgl-ast'),
+            connDot: document.getElementById('conn-dot')
         };
-        let SENSOR_LAT=0.0, SENSOR_LON=0.0, sensorMarker=null, originSet=false, activeTab='logs', pktCounter=0, isOnline=false;
+        const state = { tak: 'off', origin: 'off', ast: 'off', pendingTak: 0 };
+        let SENSOR_LAT=0.0, SENSOR_LON=0.0, sensorMarker=null, originSet=false, pktCounter=0, isOnline=false;
         const tracks={}; let map;
 
         function toRad(deg){return deg*Math.PI/180;} function toDeg(rad){return rad*180/Math.PI;}
@@ -172,37 +189,140 @@
             if(!originSet){map.setView([lat,lon],10); originSet=true;}
         }
 
-        // --- TOGGLE SSL UI ---
+        // --- TOGGLE LOGIC ---
+        window.handleToggle = (type) => {
+            const proto = document.getElementById('cot-proto').value;
+            const isTcp = (proto === 'tcp' || proto === 'ssl');
+            let newState = (state[type] === 'off') ? 'on' : 'off';
+            
+            if (type === 'tak' && newState === 'on' && isTcp) {
+                state[type] = 'pending';
+                state.pendingTak = Date.now();
+                ui.tglTak.setAttribute('data-state', 'pending');
+            } else {
+                state[type] = newState;
+                if(type === 'tak') ui.tglTak.setAttribute('data-state', newState);
+                if(type === 'origin') ui.tglOrigin.setAttribute('data-state', newState);
+                if(type === 'ast') ui.tglAst.setAttribute('data-state', newState);
+            }
+            saveNetConfig(true); 
+        };
+
+        // --- MONITOR ---
+        async function monitorLoop() {
+            try {
+                const res = await fetch('/api/status');
+                if (res.ok) {
+                    const status = await res.json();
+                    if (state.tak === 'pending') {
+                        if (status.tcp_connected) {
+                            state.tak = 'on'; ui.tglTak.setAttribute('data-state', 'on');
+                        } else if (Date.now() - state.pendingTak > 5000) {
+                            state.tak = 'off'; ui.tglTak.setAttribute('data-state', 'off'); saveNetConfig(true);
+                        }
+                    } else if (state.tak === 'on' && status.protocol !== 'udp' && !status.tcp_connected) {
+                        state.tak = 'off'; ui.tglTak.setAttribute('data-state', 'off'); saveNetConfig(true);
+                    }
+                }
+            } catch(e) {}
+            setTimeout(monitorLoop, 1000);
+        }
+
+        async function uploadFile(fileInputId) {
+            const input = document.getElementById(fileInputId);
+            if (input.files.length > 0) {
+                const file = input.files[0];
+                
+                // Read file content into memory
+                const buffer = await file.arrayBuffer();
+                
+                try {
+                    // POST to /api/upload?name=filename
+                    await fetch('/api/upload?name=' + encodeURIComponent(file.name), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/octet-stream' },
+                        body: buffer
+                    });
+                    console.log("Uploaded: " + file.name);
+                    return file.name;
+                } catch (e) {
+                    console.error("Upload failed for " + file.name);
+                    return null;
+                }
+            }
+            return null; // No new file selected
+        }
+
+        // --- SAVE CONFIG ---
+        window.saveNetConfig = async (silent = false) => {
+            // 1. Upload Certs first
+            let clientCertName = document.getElementById('ssl-client-cert').files[0]?.name || "";
+            let trustStoreName = document.getElementById('ssl-trust-store').files[0]?.name || "";
+
+            if (clientCertName) await uploadFile('ssl-client-cert');
+            if (trustStoreName) await uploadFile('ssl-trust-store');
+
+            // 2. Prepare Config
+            const cfg = {
+                rx_port: parseInt(document.getElementById('rx-port').value),
+                cot_ip: document.getElementById('cot-ip').value,
+                cot_port: parseInt(document.getElementById('cot-port').value),
+                cot_proto: document.getElementById('cot-proto').value,
+                
+                ssl_client_pass: document.getElementById('ssl-client-pass').value,
+                ssl_trust_pass: document.getElementById('ssl-trust-pass').value,
+                ssl_client_cert: clientCertName, 
+                ssl_trust_store: trustStoreName, 
+
+                asterix_ip: document.getElementById('ast-ip').value,
+                asterix_port: parseInt(document.getElementById('ast-port').value),
+                tak_output_enabled: (state.tak !== 'off'), 
+                send_sensor_pos: (state.origin === 'on'),
+                asterix_output_enabled: (state.ast === 'on')
+            };
+
+            await fetch('/api/config', {method:'POST', body:JSON.stringify(cfg)});
+            if(!silent) alert("Configuration Applied!");
+        };
+
         window.toggleSSL = () => {
             const proto = document.getElementById('cot-proto').value;
             document.getElementById('ssl-panel').style.display = (proto === 'ssl') ? 'block' : 'none';
         };
 
-        // --- CONFIG ---
-        window.applyConfig = async () => {
-            const clientCert = document.getElementById('ssl-client-cert').files[0];
-            const trustCert = document.getElementById('ssl-trust-store').files[0];
+        async function statusLoop() {
+            try {
+                const res = await fetch('/api/status');
+                if (res.ok) {
+                    const status = await res.json();
+                    if (status.protocol === 'udp') {
+                        ui.connDot.className = "indicator green"; ui.connDot.title = "UDP";
+                    } else {
+                        ui.connDot.className = status.tcp_connected ? "indicator green" : "indicator red";
+                        ui.connDot.title = status.tcp_connected ? "Connected" : "Disconnected";
+                    }
+                }
+            } catch(e) {}
+            setTimeout(statusLoop, 1000);
+        }
 
-            const cfg = { 
-                rx_port: parseInt(document.getElementById('rx-port').value), 
-                cot_ip: document.getElementById('cot-ip').value, 
-                cot_port: parseInt(document.getElementById('cot-port').value),
-                cot_proto: document.getElementById('cot-proto').value,
-                send_sensor_pos: document.getElementById('send-origin').checked,
-                // Passwords are plain text strings
-                ssl_client_pass: document.getElementById('ssl-client-pass').value,
-                ssl_trust_pass: document.getElementById('ssl-trust-pass').value,
-                // For files, we just send the name for now as the backend isn't doing multipart upload
-                ssl_client_cert: clientCert ? clientCert.name : "",
-                ssl_trust_store: trustCert ? trustCert.name : ""
-            };
-            
-            await fetch('/api/config', {method:'POST', body:JSON.stringify(cfg)});
-            alert("Configuration Applied!");
-        };
-
-        async function dataLoop(){try{const res=await fetch('/api/data');if(res.ok){if(!isOnline){ui.wsInd.className="indicator green";ui.wsText.innerText="Online";isOnline=true;}const packets=await res.json();if(Array.isArray(packets)&&packets.length>0){pktCounter+=packets.length;ui.pktCount.innerText=pktCounter.toLocaleString();if(activeTab==='data'){ui.log.innerText=JSON.stringify(packets[0].layers.asterix||packets[0],null,2);}packets.forEach(p=>processPacket(p));}}}catch(e){if(isOnline){ui.wsInd.className="indicator red";ui.wsText.innerText="Offline";isOnline=false;}}setTimeout(dataLoop,100);}
-        async function logLoop(){if(activeTab==='logs'){try{const res=await fetch('/api/log');if(res.ok){const data=await res.json();ui.log.innerHTML="";data.logs.forEach(line=>{const d=document.createElement('div');d.className="log-entry";d.textContent=line;ui.log.appendChild(d);});ui.log.scrollTop=ui.log.scrollHeight;}}catch(e){}}setTimeout(logLoop,1000);}
+        async function dataLoop(){
+            try{
+                const res=await fetch('/api/data');
+                if(res.ok){
+                    ui.wsInd.className="indicator green"; ui.wsText.innerText="Online";
+                    const packets=await res.json();
+                    if(Array.isArray(packets) && packets.length>0){
+                        pktCounter+=packets.length;
+                        ui.pktCount.innerText=pktCounter.toLocaleString();
+                        packets.forEach(p=>processPacket(p));
+                    }
+                }
+            }catch(e){
+                ui.wsInd.className="indicator red"; ui.wsText.innerText="Offline";
+            }
+            setTimeout(dataLoop,100);
+        }
 
         function processPacket(packet){
             if(!packet.layers||!packet.layers.asterix)return; const ast=packet.layers.asterix;
@@ -229,9 +349,11 @@
             else{const m=L.marker([lat,lon],{icon:icon}).addTo(map);m.bindPopup(`Track: ${id}`);tracks[id]={marker:m,lastUpdate:Date.now()};}
         }
         setInterval(()=>{const now=Date.now();let c=0;Object.keys(tracks).forEach(id=>{if(now-tracks[id].lastUpdate>5000){if(map)map.removeLayer(tracks[id].marker);delete tracks[id];}else c++;});ui.trkCount.innerText=c;},1000);
-        window.setTab=(t)=>{activeTab=t;document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));event.target.classList.add('active');ui.log.innerHTML=(t==='logs')?"Loading...":"Waiting...";};
         
-        dataLoop(); logLoop();
+        window.addEventListener('load', toggleSSL);
+        monitorLoop();
+        statusLoop();
+        dataLoop();
     </script>
 </body>
 </html>

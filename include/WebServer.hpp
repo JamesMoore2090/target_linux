@@ -5,10 +5,11 @@
 #include <string>
 #include <thread>
 #include <atomic>
+#include "MarsEngine.hpp"
 
 class WebServer {
 public:
-    WebServer(AppConfig& config, TargexCore& targexCore);
+    WebServer(AppConfig& config, MarsEngine& engine);
     ~WebServer();
 
     void start();
@@ -16,7 +17,7 @@ public:
 
 private:
     AppConfig& m_config;
-    TargexCore& m_engine;
+    MarsEngine& m_engine;
     
     // The Server Object
     httplib::Server m_server;
