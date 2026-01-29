@@ -2,11 +2,14 @@
   "system": {
     "app_name": "TARGEX-CLI",
     "version": "1.0.0",
-    "tick_rate_ms": 10,
-    "pid_file": "/var/run/targex.pid",
-    "site": "test",
+    "site": "GNE",
     "isMSCTActive": false,
-    "webport": 8080
+    "webport": 8080,
+    "isReplayActive": false,
+    "isFileLogActive": true,
+    "isMapActive": true,
+    "isTakServerActive": true,
+    "isAsterixReplayActive": true
   },
   "logging": {
     "level": "debug",
@@ -21,13 +24,25 @@
     "multicast_group": "227.0.0.2",
     "buffer_size": 4096
   },
-  "processing": {
-    "active_categories": [34, 48],
-    "filter_test_targets": true,
-    "staleness_threshold_sec": 30
+  "AsterixOutput": {
+    "asterix_ip": "127.0.0.1",
+    "asterix_port": 50010
   },
   "output": {
     "enabled": true,
     "destination": "output/"
+  },
+  "TAKOutput": {
+    "cot_ip": "10.90.90.208",
+    "cot_port": 8089,
+    "cot_protocol": "ssl",
+    "rx_port": 8600,
+    "send_asterix": false,
+    "send_sensor_pos": true,
+    "send_tak_tracks": true,
+    "ssl_client_cert": "user.p12",
+    "ssl_client_pass": "atakatak",
+    "ssl_trust_pass": "atakatak",
+    "ssl_trust_store": "truststore-intermediate-ca.p12"
   }
 }

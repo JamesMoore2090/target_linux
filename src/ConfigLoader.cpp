@@ -33,7 +33,7 @@ bool ConfigLoader::load(const std::string& path, AppConfig& config) {
         }
 
         if (j.contains("network_input")) {
-            config.interface = j["network_input"].value("interface", "");
+            config.interface = j["network_input"].value("interface", "ens34");
             config.rx_port = j["network_input"].value("port", 8600);
             config.multicast_group = j["network_input"].value("multicast_group", "0.0.0.0");
         }

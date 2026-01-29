@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <nlohmann/json.hpp>
 
 struct AppConfig {
     // System
@@ -44,6 +45,14 @@ struct AppConfig {
 
     // Processing
     std::vector<int> active_categories;
+
+    // JSON Serialization
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, 
+        rx_port, cot_ip, cot_port, cot_protocol, 
+        send_sensor_pos, send_tak_tracks, 
+        send_asterix, asterix_ip, asterix_port,
+        ssl_client_cert, ssl_client_pass, ssl_trust_store, ssl_trust_pass
+    );
 };
 class ConfigLoader {
 public:

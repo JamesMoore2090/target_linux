@@ -6,5 +6,7 @@ logs/
 *.a
 *.log
 .vscode/
-public/download.csv
-resources/*.p12
+public/
+.csv
+resources/
+*.p12

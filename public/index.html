@@ -12,38 +12,35 @@
         body { 
             margin: 0; padding: 0; background: #111; 
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            overflow: hidden; 
-            display: flex; /* Flex layout is key here */
-            height: 100vh; 
+            overflow: hidden; display: flex; height: 100vh; 
         }
         
         /* SIDEBARS */
         .sidebar { background: #1e1e1e; border-color: #333; color: #ccc; display: flex; flex-direction: column; z-index: 1000; }
-        
-        /* Fixed width for Left Sidebar */
         #sidebar-left { width: 340px; min-width: 340px; border-right: 1px solid #333; overflow-y: auto; } 
-
-        /* MAP takes up all remaining space */
         #map { flex-grow: 1; height: 100%; background: #000; z-index: 1; }
 
-        /* WIDGET STYLES (Kept unchanged) */
+        /* WIDGETS */
         .sidebar-header { padding: 15px; background: #252526; border-bottom: 2px solid #007acc; }
         .sidebar-header h2 { margin: 0; color: #00ff00; font-size: 20px; letter-spacing: 1px; }
         .sidebar-header span { font-size: 10px; color: #888; text-transform: uppercase; }
+        
         .section { padding: 12px 15px; border-bottom: 1px solid #333; }
         .section-title { font-size: 11px; font-weight: bold; color: #007acc; margin-bottom: 8px; text-transform: uppercase; }
         .divider-title { margin-top: 15px; padding-top: 10px; border-top: 1px solid #333; font-size: 11px; font-weight: bold; color: #007acc; text-transform: uppercase; margin-bottom: 8px; }
+
         .status-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px; }
         .status-val { font-family: monospace; color: #fff; }
         .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
         .green { background: #00ff00; box-shadow: 0 0 5px #00ff00; }
         .red { background: #ff0000; box-shadow: 0 0 5px #ff0000; }
+        
         .input-group { margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
         .input-group label { font-size: 11px; color: #888; flex-grow: 1; }
         .input-group input, .input-group select { width: 140px; background: #333; border: 1px solid #444; color: #fff; padding: 4px; font-size: 12px; text-align: right; }
         .input-group input[type="file"] { border:none; background:transparent; width: 100%; font-size:10px; text-align: left;}
         
-        /* TOGGLE SWITCH STYLES */
+        /* TOGGLE SWITCHES */
         .toggle-container { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; background: #252526; padding: 8px; border-radius: 4px; border: 1px solid #333; }
         .toggle-switch { position: relative; width: 40px; height: 20px; border-radius: 10px; cursor: pointer; transition: background 0.3s; }
         .toggle-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff; border-radius: 50%; transition: transform 0.3s; box-shadow: 0 1px 3px rgba(0,0,0,0.5); }
@@ -163,8 +160,15 @@
             connDot: document.getElementById('conn-dot')
         };
         const state = { tak: 'off', origin: 'off', ast: 'off', pendingTak: 0 };
-        let SENSOR_LAT=0.0, SENSOR_LON=0.0, sensorMarker=null, originSet=false, pktCounter=0, isOnline=false;
-        const tracks={}; let map;
+        
+        // Tracking Variables
+        let SENSOR_LAT=0.0, SENSOR_LON=0.0;
+        let sensorMarker=null;
+        let originSet=false;
+        let lastSensorUpdate=0; // [NEW] Timestamp for timeout
+        let pktCounter=0;
+        const tracks={}; 
+        let map;
 
         function toRad(deg){return deg*Math.PI/180;} function toDeg(rad){return rad*180/Math.PI;}
         function polarToGeo(rangeNm, azimuthDeg){
@@ -181,63 +185,28 @@
         }},100);
 
         function updateSensorMarker(lat,lon){
-            if(!map)return; SENSOR_LAT=lat; SENSOR_LON=lon;
+            if(!map)return; 
+            SENSOR_LAT=lat; SENSOR_LON=lon;
+            
+            // Update Timestamp
+            lastSensorUpdate = Date.now();
+            
             ui.latInput.value=lat.toFixed(5); ui.lonInput.value=lon.toFixed(5);
             ui.originStatus.innerText="Origin set via Cat 34"; ui.originStatus.style.color="#00ff00";
+            
             if(sensorMarker)map.removeLayer(sensorMarker);
             sensorMarker=L.circleMarker([lat,lon],{color:'#00ff00',fillColor:'#00ff00',fillOpacity:0.5,radius:6}).bindPopup("Sensor Origin").addTo(map);
+            
             if(!originSet){map.setView([lat,lon],10); originSet=true;}
         }
 
-        // --- TOGGLE LOGIC ---
-        window.handleToggle = (type) => {
-            const proto = document.getElementById('cot-proto').value;
-            const isTcp = (proto === 'tcp' || proto === 'ssl');
-            let newState = (state[type] === 'off') ? 'on' : 'off';
-            
-            if (type === 'tak' && newState === 'on' && isTcp) {
-                state[type] = 'pending';
-                state.pendingTak = Date.now();
-                ui.tglTak.setAttribute('data-state', 'pending');
-            } else {
-                state[type] = newState;
-                if(type === 'tak') ui.tglTak.setAttribute('data-state', newState);
-                if(type === 'origin') ui.tglOrigin.setAttribute('data-state', newState);
-                if(type === 'ast') ui.tglAst.setAttribute('data-state', newState);
-            }
-            saveNetConfig(true); 
-        };
-
-        // --- MONITOR ---
-        async function monitorLoop() {
-            try {
-                const res = await fetch('/api/status');
-                if (res.ok) {
-                    const status = await res.json();
-                    if (state.tak === 'pending') {
-                        if (status.tcp_connected) {
-                            state.tak = 'on'; ui.tglTak.setAttribute('data-state', 'on');
-                        } else if (Date.now() - state.pendingTak > 5000) {
-                            state.tak = 'off'; ui.tglTak.setAttribute('data-state', 'off'); saveNetConfig(true);
-                        }
-                    } else if (state.tak === 'on' && status.protocol !== 'udp' && !status.tcp_connected) {
-                        state.tak = 'off'; ui.tglTak.setAttribute('data-state', 'off'); saveNetConfig(true);
-                    }
-                }
-            } catch(e) {}
-            setTimeout(monitorLoop, 1000);
-        }
-
+        // --- UPLOAD HELPER ---
         async function uploadFile(fileInputId) {
             const input = document.getElementById(fileInputId);
             if (input.files.length > 0) {
                 const file = input.files[0];
-                
-                // Read file content into memory
                 const buffer = await file.arrayBuffer();
-                
                 try {
-                    // POST to /api/upload?name=filename
                     await fetch('/api/upload?name=' + encodeURIComponent(file.name), {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/octet-stream' },
@@ -250,39 +219,50 @@
                     return null;
                 }
             }
-            return null; // No new file selected
+            return null;
         }
 
         // --- SAVE CONFIG ---
         window.saveNetConfig = async (silent = false) => {
-            // 1. Upload Certs first
             let clientCertName = document.getElementById('ssl-client-cert').files[0]?.name || "";
             let trustStoreName = document.getElementById('ssl-trust-store').files[0]?.name || "";
 
             if (clientCertName) await uploadFile('ssl-client-cert');
             if (trustStoreName) await uploadFile('ssl-trust-store');
 
-            // 2. Prepare Config
-            const cfg = {
-                rx_port: parseInt(document.getElementById('rx-port').value),
-                cot_ip: document.getElementById('cot-ip').value,
+            const cfg = { 
+                rx_port: parseInt(document.getElementById('rx-port').value), 
+                cot_ip: document.getElementById('cot-ip').value, 
                 cot_port: parseInt(document.getElementById('cot-port').value),
                 cot_proto: document.getElementById('cot-proto').value,
-                
                 ssl_client_pass: document.getElementById('ssl-client-pass').value,
                 ssl_trust_pass: document.getElementById('ssl-trust-pass').value,
-                ssl_client_cert: clientCertName, 
-                ssl_trust_store: trustStoreName, 
-
+                ssl_client_cert: clientCertName,
+                ssl_trust_store: trustStoreName,
                 asterix_ip: document.getElementById('ast-ip').value,
                 asterix_port: parseInt(document.getElementById('ast-port').value),
                 tak_output_enabled: (state.tak !== 'off'), 
                 send_sensor_pos: (state.origin === 'on'),
                 asterix_output_enabled: (state.ast === 'on')
             };
-
             await fetch('/api/config', {method:'POST', body:JSON.stringify(cfg)});
             if(!silent) alert("Configuration Applied!");
+        };
+
+        window.handleToggle = (type) => {
+            const proto = document.getElementById('cot-proto').value;
+            const isTcp = (proto === 'tcp' || proto === 'ssl');
+            let newState = (state[type] === 'off') ? 'on' : 'off';
+            if (type === 'tak' && newState === 'on' && isTcp) {
+                state[type] = 'pending'; state.pendingTak = Date.now();
+                ui.tglTak.setAttribute('data-state', 'pending');
+            } else {
+                state[type] = newState;
+                if(type === 'tak') ui.tglTak.setAttribute('data-state', newState);
+                if(type === 'origin') ui.tglOrigin.setAttribute('data-state', newState);
+                if(type === 'ast') ui.tglAst.setAttribute('data-state', newState);
+            }
+            saveNetConfig(true); 
         };
 
         window.toggleSSL = () => {
@@ -290,17 +270,75 @@
             document.getElementById('ssl-panel').style.display = (proto === 'ssl') ? 'block' : 'none';
         };
 
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                if (!res.ok) return;
+                const cfg = await res.json();
+
+                // 1. Populate Inputs
+                if (cfg.rx_port) document.getElementById('rx-port').value = cfg.rx_port;
+                if (cfg.cot_ip) document.getElementById('cot-ip').value = cfg.cot_ip;
+                if (cfg.cot_port) document.getElementById('cot-port').value = cfg.cot_port;
+                if (cfg.cot_protocol) {
+                    document.getElementById('cot-proto').value = cfg.cot_protocol;
+                    toggleSSL(); // Update visibility
+                }
+                
+                if (cfg.asterix_ip) document.getElementById('ast-ip').value = cfg.asterix_ip;
+                if (cfg.asterix_port) document.getElementById('ast-port').value = cfg.asterix_port;
+                
+                // Passwords usually aren't sent back for security, but we fill what we have
+                if (cfg.ssl_client_pass) document.getElementById('ssl-client-pass').value = cfg.ssl_client_pass;
+                if (cfg.ssl_trust_pass) document.getElementById('ssl-trust-pass').value = cfg.ssl_trust_pass;
+
+                // 2. Set Toggles
+                setToggleState('tak', cfg.send_tak_tracks ? 'on' : 'off');
+                setToggleState('origin', cfg.send_sensor_pos ? 'on' : 'off');
+                setToggleState('ast', cfg.send_asterix ? 'on' : 'off');
+                
+                console.log("Configuration Loaded.");
+            } catch (e) {
+                console.error("Failed to load config:", e);
+            }
+        }
+
+        // Helper to visually update toggles without triggering a save
+        function setToggleState(type, newState) {
+            state[type] = newState;
+            const el = (type === 'tak') ? ui.tglTak : (type === 'origin') ? ui.tglOrigin : ui.tglAst;
+            if(el) el.setAttribute('data-state', newState);
+        }
+
+        // --- INIT ---
+        window.addEventListener('load', () => {
+            toggleSSL();
+            loadConfig(); // [NEW] Fetch settings immediately
+        });
+
+        async function monitorLoop() {
+            try {
+                const res = await fetch('/api/status');
+                if (res.ok) {
+                    const status = await res.json();
+                    if (state.tak === 'pending') {
+                        if (status.tcp_connected) { state.tak = 'on'; ui.tglTak.setAttribute('data-state', 'on'); }
+                        else if (Date.now() - state.pendingTak > 5000) { state.tak = 'off'; ui.tglTak.setAttribute('data-state', 'off'); saveNetConfig(true); }
+                    } else if (state.tak === 'on' && status.protocol !== 'udp' && !status.tcp_connected) {
+                        state.tak = 'off'; ui.tglTak.setAttribute('data-state', 'off'); saveNetConfig(true);
+                    }
+                }
+            } catch(e) {}
+            setTimeout(monitorLoop, 1000);
+        }
+
         async function statusLoop() {
             try {
                 const res = await fetch('/api/status');
                 if (res.ok) {
                     const status = await res.json();
-                    if (status.protocol === 'udp') {
-                        ui.connDot.className = "indicator green"; ui.connDot.title = "UDP";
-                    } else {
-                        ui.connDot.className = status.tcp_connected ? "indicator green" : "indicator red";
-                        ui.connDot.title = status.tcp_connected ? "Connected" : "Disconnected";
-                    }
+                    if (status.protocol === 'udp') { ui.connDot.className = "indicator green"; ui.connDot.title = "UDP"; }
+                    else { ui.connDot.className = status.tcp_connected ? "indicator green" : "indicator red"; ui.connDot.title = status.tcp_connected ? "Connected" : "Disconnected"; }
                 }
             } catch(e) {}
             setTimeout(statusLoop, 1000);
@@ -341,6 +379,7 @@
             if(lat===null&&rho!==null&&theta!==null){const g=polarToGeo(rho,theta);lat=g.lat;lon=g.lon;}
             if(lat!==null&&lon!==null&&id!==null)updateTrack(id,lat,lon);
         }
+
         function updateTrack(id,lat,lon){
             if(!map||typeof ms==='undefined')return;
             const sidc="SUSP-------****", mysymbol=new ms.Symbol(sidc,{size:24,uniqueDesignation:id,colorMode:"Light"});
@@ -348,7 +387,31 @@
             if(tracks[id]){tracks[id].marker.setLatLng([lat,lon]);tracks[id].marker.setIcon(icon);tracks[id].lastUpdate=Date.now();}
             else{const m=L.marker([lat,lon],{icon:icon}).addTo(map);m.bindPopup(`Track: ${id}`);tracks[id]={marker:m,lastUpdate:Date.now()};}
         }
-        setInterval(()=>{const now=Date.now();let c=0;Object.keys(tracks).forEach(id=>{if(now-tracks[id].lastUpdate>5000){if(map)map.removeLayer(tracks[id].marker);delete tracks[id];}else c++;});ui.trkCount.innerText=c;},1000);
+
+        // --- CLEANUP LOOP (Tracks AND Sensor) ---
+        setInterval(()=>{
+            const now=Date.now();
+            let c=0;
+            
+            // 1. Clean Tracks
+            Object.keys(tracks).forEach(id=>{
+                if(now-tracks[id].lastUpdate>5000){
+                    if(map)map.removeLayer(tracks[id].marker);
+                    delete tracks[id];
+                }else c++;
+            });
+            ui.trkCount.innerText=c;
+
+            // 2. Clean Sensor Origin (5s Timeout)
+            if (sensorMarker && (now - lastSensorUpdate > 5000)) {
+                map.removeLayer(sensorMarker);
+                sensorMarker = null;
+                originSet = false; // Stop polar plotting
+                ui.originStatus.innerText = "Signal Lost (Timeout)";
+                ui.originStatus.style.color = "#ff3333";
+            }
+
+        }, 1000);
         
         window.addEventListener('load', toggleSSL);
         monitorLoop();

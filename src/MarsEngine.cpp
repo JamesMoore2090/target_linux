@@ -344,9 +344,9 @@ void MarsEngine::processLoop() {
             auto now = std::chrono::steady_clock::now();
             if (std::chrono::duration_cast<std::chrono::seconds>(now - lastOriginCoT).count() >= 10) {
                 std::stringstream xml;
-                xml << "<event version='2.0' uid='SENSOR-ORIGIN' type='a-f-G-U-C' how='m-g' time='" << getIsoTime(0) << "' start='" << getIsoTime(0) << "' stale='" << getIsoTime(20) << "'>"
+                xml << "<event version='2.0' uid='SENSOR-ORIGIN' type='a-f-G-U-H' how='m-g' time='" << getIsoTime(0) << "' start='" << getIsoTime(0) << "' stale='" << getIsoTime(20) << "'>"
                     << "<point lat='" << m_sensorLat << "' lon='" << m_sensorLon << "' hae='0' ce='10' le='10'/>"
-                    << "<detail><contact callsign='ASTERIX SENSOR'/></detail></event>";
+                    << "<detail><contact callsign='GNE'/></detail></event>";
                 sendToTak(xml.str());
                 lastOriginCoT = now;
             }
