@@ -12,7 +12,7 @@
 
 class TargexCore {
 public:
-    TargexCore(const AppConfig& config);
+    TargexCore(AppConfig& config);
     ~TargexCore();
 
     bool initialize();
@@ -23,7 +23,7 @@ public:
     nlohmann::json pollData();
 
 private:
-    AppConfig m_config;
+    AppConfig& m_config;
     FILE* m_tsharkPipe = nullptr;
     std::mutex m_pipeMutex;
     std::atomic<bool> m_isCapturing{false};

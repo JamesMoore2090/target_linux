@@ -140,8 +140,8 @@
         </div>
 
         <div style="margin-top:auto; padding:15px; border-top:1px solid #333;">
-            <button class="btn btn-nav" onclick="location.href='/log'">VIEW FULL LIVE LOG</button>
-            <button class="btn btn-nav" onclick="location.href='/files'">OPEN FILE MANAGER</button>
+            <button class="btn btn-nav" onclick="location.href='/asterixLiveLog'">VIEW FULL LIVE LOG</button>
+            <button class="btn btn-nav" onclick="location.href='/pcapFilesAndMerge'">OPEN FILE MANAGER</button>
         </div>
     </div>
 
@@ -161,16 +161,30 @@
         };
         const state = { tak: 'off', origin: 'off', ast: 'off', pendingTak: 0 };
         
-        // Tracking Variables
         let SENSOR_LAT=0.0, SENSOR_LON=0.0;
         let sensorMarker=null;
         let originSet=false;
-        let lastSensorUpdate=0; // [NEW] Timestamp for timeout
+        let lastSensorUpdate=0; 
         let pktCounter=0;
         const tracks={}; 
         let map;
 
         function toRad(deg){return deg*Math.PI/180;} function toDeg(rad){return rad*180/Math.PI;}
+        
+        function computeDestinationPoint(lat, lon, distanceM, bearingDeg) {
+            const R = 6371e3; 
+            const angDist = distanceM / R;
+            const lat1 = toRad(lat);
+            const lon1 = toRad(lon);
+            const brng = toRad(bearingDeg);
+
+            const lat2 = Math.asin(Math.sin(lat1) * Math.cos(angDist) + 
+                                   Math.cos(lat1) * Math.sin(angDist) * Math.cos(brng));
+            const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(angDist) * Math.cos(lat1),
+                                           Math.cos(angDist) - Math.sin(lat1) * Math.sin(lat2));
+            return [toDeg(lat2), toDeg(lon2)];
+        }
+
         function polarToGeo(rangeNm, azimuthDeg){
             const R=6371e3, rangeM=rangeNm*1852, ad=rangeM/R;
             const lat1=toRad(SENSOR_LAT), lon1=toRad(SENSOR_LON), brng=toRad(azimuthDeg);
@@ -187,20 +201,39 @@
         function updateSensorMarker(lat,lon){
             if(!map)return; 
             SENSOR_LAT=lat; SENSOR_LON=lon;
-            
-            // Update Timestamp
             lastSensorUpdate = Date.now();
-            
             ui.latInput.value=lat.toFixed(5); ui.lonInput.value=lon.toFixed(5);
             ui.originStatus.innerText="Origin set via Cat 34"; ui.originStatus.style.color="#00ff00";
-            
             if(sensorMarker)map.removeLayer(sensorMarker);
             sensorMarker=L.circleMarker([lat,lon],{color:'#00ff00',fillColor:'#00ff00',fillOpacity:0.5,radius:6}).bindPopup("Sensor Origin").addTo(map);
-            
             if(!originSet){map.setView([lat,lon],10); originSet=true;}
         }
 
-        // --- UPLOAD HELPER ---
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                if (!res.ok) return;
+                const cfg = await res.json();
+                if (cfg.rx_port) document.getElementById('rx-port').value = cfg.rx_port;
+                if (cfg.cot_ip) document.getElementById('cot-ip').value = cfg.cot_ip;
+                if (cfg.cot_port) document.getElementById('cot-port').value = cfg.cot_port;
+                if (cfg.cot_protocol) { document.getElementById('cot-proto').value = cfg.cot_protocol; toggleSSL(); }
+                if (cfg.asterix_ip) document.getElementById('ast-ip').value = cfg.asterix_ip;
+                if (cfg.asterix_port) document.getElementById('ast-port').value = cfg.asterix_port;
+                if (cfg.ssl_client_pass) document.getElementById('ssl-client-pass').value = cfg.ssl_client_pass;
+                if (cfg.ssl_trust_pass) document.getElementById('ssl-trust-pass').value = cfg.ssl_trust_pass;
+                setToggleState('tak', cfg.send_tak_tracks ? 'on' : 'off');
+                setToggleState('origin', cfg.send_sensor_pos ? 'on' : 'off');
+                setToggleState('ast', cfg.send_asterix ? 'on' : 'off');
+            } catch (e) { console.error("Failed to load config:", e); }
+        }
+
+        function setToggleState(type, newState) {
+            state[type] = newState;
+            const el = (type === 'tak') ? ui.tglTak : (type === 'origin') ? ui.tglOrigin : ui.tglAst;
+            if(el) el.setAttribute('data-state', newState);
+        }
+
         async function uploadFile(fileInputId) {
             const input = document.getElementById(fileInputId);
             if (input.files.length > 0) {
@@ -212,21 +245,15 @@
                         headers: { 'Content-Type': 'application/octet-stream' },
                         body: buffer
                     });
-                    console.log("Uploaded: " + file.name);
                     return file.name;
-                } catch (e) {
-                    console.error("Upload failed for " + file.name);
-                    return null;
-                }
+                } catch (e) { return null; }
             }
             return null;
         }
 
-        // --- SAVE CONFIG ---
         window.saveNetConfig = async (silent = false) => {
             let clientCertName = document.getElementById('ssl-client-cert').files[0]?.name || "";
             let trustStoreName = document.getElementById('ssl-trust-store').files[0]?.name || "";
-
             if (clientCertName) await uploadFile('ssl-client-cert');
             if (trustStoreName) await uploadFile('ssl-trust-store');
 
@@ -269,52 +296,6 @@
             const proto = document.getElementById('cot-proto').value;
             document.getElementById('ssl-panel').style.display = (proto === 'ssl') ? 'block' : 'none';
         };
-
-        async function loadConfig() {
-            try {
-                const res = await fetch('/api/config');
-                if (!res.ok) return;
-                const cfg = await res.json();
-
-                // 1. Populate Inputs
-                if (cfg.rx_port) document.getElementById('rx-port').value = cfg.rx_port;
-                if (cfg.cot_ip) document.getElementById('cot-ip').value = cfg.cot_ip;
-                if (cfg.cot_port) document.getElementById('cot-port').value = cfg.cot_port;
-                if (cfg.cot_protocol) {
-                    document.getElementById('cot-proto').value = cfg.cot_protocol;
-                    toggleSSL(); // Update visibility
-                }
-                
-                if (cfg.asterix_ip) document.getElementById('ast-ip').value = cfg.asterix_ip;
-                if (cfg.asterix_port) document.getElementById('ast-port').value = cfg.asterix_port;
-                
-                // Passwords usually aren't sent back for security, but we fill what we have
-                if (cfg.ssl_client_pass) document.getElementById('ssl-client-pass').value = cfg.ssl_client_pass;
-                if (cfg.ssl_trust_pass) document.getElementById('ssl-trust-pass').value = cfg.ssl_trust_pass;
-
-                // 2. Set Toggles
-                setToggleState('tak', cfg.send_tak_tracks ? 'on' : 'off');
-                setToggleState('origin', cfg.send_sensor_pos ? 'on' : 'off');
-                setToggleState('ast', cfg.send_asterix ? 'on' : 'off');
-                
-                console.log("Configuration Loaded.");
-            } catch (e) {
-                console.error("Failed to load config:", e);
-            }
-        }
-
-        // Helper to visually update toggles without triggering a save
-        function setToggleState(type, newState) {
-            state[type] = newState;
-            const el = (type === 'tak') ? ui.tglTak : (type === 'origin') ? ui.tglOrigin : ui.tglAst;
-            if(el) el.setAttribute('data-state', newState);
-        }
-
-        // --- INIT ---
-        window.addEventListener('load', () => {
-            toggleSSL();
-            loadConfig(); // [NEW] Fetch settings immediately
-        });
 
         async function monitorLoop() {
             try {
@@ -363,57 +344,127 @@
         }
 
         function processPacket(packet){
-            if(!packet.layers||!packet.layers.asterix)return; const ast=packet.layers.asterix;
+            if(!packet.layers||!packet.layers.asterix) return; 
+            const ast=packet.layers.asterix;
+            
             let id=null,lat=null,lon=null,rho=null,theta=null,cat=null;
+            let speed=0, heading=0; 
+            let vx=null, vy=null; 
+
             for(const k in ast){
-                if(k.includes("000_10_CAT"))cat=parseInt(ast[k]);
-                if(k.includes("120_LAT"))lat=parseFloat(ast[k]);
-                if(k.includes("120_LON"))lon=parseFloat(ast[k]);
-                if(k.includes("040_RHO"))rho=parseFloat(ast[k]);
-                if(k.includes("040_THETA"))theta=parseFloat(ast[k]);
-                if(k.includes("161_TN"))id=ast[k];
+                if(k.includes("000_10_CAT")) cat=parseInt(ast[k]);
+                if(k.includes("120_LAT")) lat=parseFloat(ast[k]);
+                if(k.includes("120_LON")) lon=parseFloat(ast[k]);
+                if(k.includes("040_RHO")) rho=parseFloat(ast[k]);
+                if(k.includes("040_THETA")) theta=parseFloat(ast[k]);
+                if(k.includes("161_TN")) id=ast[k];
+                
+                // Speed is likely NM/s (ASTERIX Standard)
+                // We convert to M/S for logic (1 NM = 1852 meters)
+                if(k.includes("200_GS")) speed = parseFloat(ast[k]) * 1852.0; 
+                if(k.includes("200_HDG")) heading = parseFloat(ast[k]); 
+
+                if(k.includes("185_VX") || k.includes("210_VCO")) vx = parseFloat(ast[k]);
+                if(k.includes("185_VY") || k.includes("210_VCN")) vy = parseFloat(ast[k]);
             }
-            if(Array.isArray(id))id=id[0];
-            if(lat!==null&&lon!==null&&(cat===34||id===null||id==="0")){updateSensorMarker(lat,lon);return;}
-            if(!originSet&&rho!==null)return;
-            if(lat===null&&rho!==null&&theta!==null){const g=polarToGeo(rho,theta);lat=g.lat;lon=g.lon;}
-            if(lat!==null&&lon!==null&&id!==null)updateTrack(id,lat,lon);
+
+            if (speed === 0 && vx !== null && vy !== null) {
+                speed = Math.sqrt(vx*vx + vy*vy);
+                heading = (Math.atan2(vx, vy) * 180 / Math.PI);
+                if(heading < 0) heading += 360;
+            }
+
+            if(Array.isArray(id)) id=id[0];
+            
+            if(lat!==null && lon!==null && (cat===34 || id===null || id==="0")){
+                updateSensorMarker(lat,lon);
+                return;
+            }
+            
+            if(!originSet && rho!==null) return;
+            if(lat===null && rho!==null && theta!==null){
+                const g=polarToGeo(rho,theta);
+                lat=g.lat; lon=g.lon;
+                if(heading === 0) heading = theta; 
+            }
+
+            if(lat!==null && lon!==null && id!==null) {
+                updateTrack(id, lat, lon, speed, heading);
+            }
         }
 
-        function updateTrack(id,lat,lon){
+        function updateTrack(id, lat, lon, speed, heading){
             if(!map||typeof ms==='undefined')return;
-            const sidc="SUSP-------****", mysymbol=new ms.Symbol(sidc,{size:24,uniqueDesignation:id,colorMode:"Light"});
+            
+            const sidc="SUSP-------****", mysymbol=new ms.Symbol(sidc,{size:12,uniqueDesignation:id,colorMode:"Light"});
             const icon=L.divIcon({className:'mil-icon',html:mysymbol.asSVG(),iconAnchor:[mysymbol.getAnchor().x,mysymbol.getAnchor().y]});
-            if(tracks[id]){tracks[id].marker.setLatLng([lat,lon]);tracks[id].marker.setIcon(icon);tracks[id].lastUpdate=Date.now();}
-            else{const m=L.marker([lat,lon],{icon:icon}).addTo(map);m.bindPopup(`Track: ${id}`);tracks[id]={marker:m,lastUpdate:Date.now()};}
+            
+            // Show Knots in Popup for user friendliness (M/S * 1.9438)
+            const speedKts = speed * 1.94384;
+            const popupContent = `<b>Track: ${id}</b><br>Spd: ${speedKts.toFixed(1)} kts<br>Hdg: ${heading.toFixed(1)}°`;
+
+            if(tracks[id]){
+                tracks[id].marker.setLatLng([lat,lon]);
+                tracks[id].marker.setIcon(icon);
+                tracks[id].marker.getPopup().setContent(popupContent);
+                tracks[id].lastUpdate=Date.now();
+                
+                // Leader Line: Only if speed > 1.0 m/s
+                if (speed > 1.0) { 
+                    const distMeters = speed * 60; // 60s vector
+                    const endPt = computeDestinationPoint(lat, lon, distMeters, heading);
+                    
+                    if (tracks[id].leader) {
+                        tracks[id].leader.setLatLngs([[lat,lon], endPt]);
+                    } else {
+                        tracks[id].leader = L.polyline([[lat,lon], endPt], {color: '#ffffff', weight: 1, opacity: 0.6}).addTo(map);
+                    }
+                } else {
+                    if (tracks[id].leader) { map.removeLayer(tracks[id].leader); delete tracks[id].leader; }
+                }
+
+            } else {
+                const m=L.marker([lat,lon],{icon:icon}).addTo(map);
+                m.bindPopup(popupContent);
+                
+                let leader = null;
+                if (speed > 1.0) {
+                    const distMeters = speed * 60;
+                    const endPt = computeDestinationPoint(lat, lon, distMeters, heading);
+                    leader = L.polyline([[lat,lon], endPt], {color: '#ffffff', weight: 1, opacity: 0.6}).addTo(map);
+                }
+
+                tracks[id]={marker:m, leader:leader, lastUpdate:Date.now()};
+            }
         }
 
-        // --- CLEANUP LOOP (Tracks AND Sensor) ---
         setInterval(()=>{
             const now=Date.now();
             let c=0;
-            
-            // 1. Clean Tracks
             Object.keys(tracks).forEach(id=>{
                 if(now-tracks[id].lastUpdate>5000){
-                    if(map)map.removeLayer(tracks[id].marker);
+                    if(map) {
+                        map.removeLayer(tracks[id].marker);
+                        if(tracks[id].leader) map.removeLayer(tracks[id].leader);
+                    }
                     delete tracks[id];
                 }else c++;
             });
             ui.trkCount.innerText=c;
 
-            // 2. Clean Sensor Origin (5s Timeout)
             if (sensorMarker && (now - lastSensorUpdate > 5000)) {
                 map.removeLayer(sensorMarker);
                 sensorMarker = null;
-                originSet = false; // Stop polar plotting
+                originSet = false;
                 ui.originStatus.innerText = "Signal Lost (Timeout)";
                 ui.originStatus.style.color = "#ff3333";
             }
-
         }, 1000);
         
-        window.addEventListener('load', toggleSSL);
+        window.addEventListener('load', () => {
+            toggleSSL();
+            loadConfig();
+        });
         monitorLoop();
         statusLoop();
         dataLoop();

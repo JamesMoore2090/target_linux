@@ -45,6 +45,11 @@ struct AppConfig {
 
     // Processing
     std::vector<int> active_categories;
+    
+    std::string active_log_path; 
+
+    // Track the active recording
+    std::string active_pcap_path;
 
     // JSON Serialization
     NLOHMANN_DEFINE_TYPE_INTRUSIVE(AppConfig, 

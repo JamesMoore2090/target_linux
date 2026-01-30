@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
             // 1. SYSTEM
             if (j.contains("system")) {
                 if(j["system"].contains("webport")) config.rx_port_web = j["system"]["webport"];
-                // Add other system flags if needed in AppConfig later
+                if(j["system"].contains("site")) config.site_name = j["system"]["site"];
             }
 
             // 2. NETWORK INPUT
