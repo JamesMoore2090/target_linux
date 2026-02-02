@@ -4,6 +4,7 @@
 # TARGEX CLI - Development Manager
 # ==========================================
 
+
 # Define paths
 BUILD_DIR="build"
 BIN_NAME="targex_cli"
