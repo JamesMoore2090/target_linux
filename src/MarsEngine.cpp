@@ -329,9 +329,9 @@ void MarsEngine::processLoop() {
                     }
                     if (ready) {
                         std::stringstream xml;
-                        xml << "<event version='2.0' uid='TRK-" << id << "' type='a-u-G' how='m-g' time='" << getIsoTime(0) << "' start='" << getIsoTime(0) << "' stale='" << getIsoTime(5) << "'>"
+                        xml << "<event version='2.0' uid='GNE-TRK-" << id << "' type='a-u-G' how='m-g' time='" << getIsoTime(0) << "' start='" << getIsoTime(0) << "' stale='" << getIsoTime(5) << "'>"
                             << "<point lat='" << trkLat << "' lon='" << trkLon << "' hae='0' ce='25' le='25'/>"
-                            << "<detail><contact callsign='Track " << id << "'/></detail></event>";
+                            << "<detail><contact callsign=" << id << "'/></detail></event>";
                         sendToTak(xml.str());
                     }
                 }

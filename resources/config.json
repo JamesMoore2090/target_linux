@@ -9,7 +9,7 @@
     "isFileLogActive": true,
     "isMapActive": true,
     "isTakServerActive": true,
-    "isAsterixReplayActive": true
+    "isAsterixRelayActive": true
   },
   "logging": {
     "level": "debug",
