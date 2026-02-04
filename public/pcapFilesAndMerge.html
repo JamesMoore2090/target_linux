@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TARGEX File Manager</title>
+    <style>
+        /* --- GLOBAL LAYOUT --- */
+        body { 
+            margin: 0; padding: 0; background: #111; color: #ccc;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            overflow: hidden; display: flex; height: 100vh; 
+        }
+
+        /* --- SIDEBAR --- */
+        #sidebar {
+            width: 300px; min-width: 300px;
+            background: #1e1e1e; border-right: 1px solid #333;
+            display: flex; flex-direction: column;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.5); z-index: 1000;
+        }
+        .sidebar-header {
+            padding: 15px; background: #252526; border-bottom: 2px solid #007acc;
+        }
+        .sidebar-header h2 { margin: 0; color: #00ff00; font-size: 20px; letter-spacing: 1px; }
+        .sidebar-header span { font-size: 10px; color: #888; }
+        
+        .section { padding: 15px; border-bottom: 1px solid #333; }
+        .section-title { font-size: 11px; font-weight: bold; color: #007acc; margin-bottom: 10px; text-transform: uppercase; }
+        
+        .btn { 
+            width: 100%; padding: 8px; cursor: pointer; border: none; 
+            font-weight: bold; background: #007acc; color: white; margin-top: 5px;
+            text-align: center; text-decoration: none; display: inline-block; box-sizing: border-box;
+            font-size: 13px;
+        }
+        .btn:hover { background: #0099ff; }
+        .btn-nav { background: #444; }
+        .btn-nav:hover { background: #555; }
+
+        /* --- MAIN CONTENT AREA --- */
+        #main-content {
+            flex-grow: 1; padding: 20px; overflow-y: auto; background: #111;
+        }
+
+        h1 { color: #00ff00; margin-top: 0; font-family: monospace; border-bottom: 1px solid #333; padding-bottom: 10px; }
+
+        /* Controls Bar */
+        .actions { 
+            display: flex; gap: 10px; margin-bottom: 20px; background: #1e1e1e; padding: 15px; border: 1px solid #333;
+            align-items: center;
+        }
+        select { 
+            background: #333; color: white; border: 1px solid #555; padding: 8px; flex-grow: 1; 
+        }
+
+        /* Table Styling */
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #333; font-family: monospace; }
+        
+        th.sortable { 
+            color: #888; text-transform: uppercase; font-size: 12px; border-bottom: 2px solid #007acc; 
+            cursor: pointer; user-select: none;
+        }
+        th.sortable:hover { color: #fff; background: #1a1a1a; }
+        th.sortable span { margin-left: 5px; font-size: 10px; }
+
+        tr:hover { background: #1a1a1a; }
+        
+        .locked { color: #555; font-style: italic; }
+        .file-checkbox { transform: scale(1.2); cursor: pointer; }
+
+        /* --- MODAL --- */
+        #processing-modal {
+            display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.8); align-items: center; justify-content: center; flex-direction: column;
+        }
+        .spinner {
+            border: 8px solid #333; border-top: 8px solid #00ff00; border-radius: 50%;
+            width: 60px; height: 60px; animation: spin 1s linear infinite; margin-bottom: 20px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2>TARGEX</h2>
+            <span>FILE MANAGEMENT SYSTEM</span>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Archive Status</div>
+            <div style="font-size: 13px; color: #888; margin-bottom: 5px;">Storage Location:</div>
+            <div style="font-family: monospace; color: #fff; margin-bottom: 15px;">/output/</div>
+            
+            <div style="font-size: 13px; color: #888;">File Count: <span id="file-count" style="color: #fff">0</span></div>
+        </div>
+
+        <div class="section" style="border:none;">
+            <div class="section-title">Navigation</div>
+            <a href="/" class="btn btn-nav">TACTICAL MAP</a>
+            <a href="/log" class="btn btn-nav">LIVE LOG</a>
+        </div>
+    </div>
+
+    <div id="main-content">
+        <h1>DATA ARCHIVE</h1>
+
+        <div class="actions">
+            <div style="color: #ccc; font-weight: bold; margin-right: 10px;">Export Options:</div>
+            <select id="export-format">
+                <option value="csv">CSV (Excel Compatible)</option>
+                <option value="json">JSON (Full Data Structure)</option>
+            </select>
+            <button class="btn" onclick="processFiles()" style="width: auto; margin-top: 0; background: #005500;">
+                MERGE & DOWNLOAD SELECTED
+            </button>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 50px;">Select</th>
+                    <th class="sortable" onclick="handleSort('name')">Filename <span id="sort-icon-name"></span></th>
+                    <th class="sortable" onclick="handleSort('size')">Size <span id="sort-icon-size"></span></th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="file-list"></tbody>
+        </table>
+    </div>
+
+    <div id="processing-modal">
+        <div class="spinner"></div>
+        <h2 style="color: #00ff00; font-family: monospace;">PROCESSING DATA...</h2>
+        <p style="color: #ccc;">Merging and Converting Files. Please Wait.</p>
+    </div>
+
+    <script>
+        let allFiles = [];
+        let sortState = { col: 'name', dir: 'desc' };
+
+        async function loadFiles() {
+            try {
+                const res = await fetch('/api/files');
+                const data = await res.json();
+                allFiles = data.files || [];
+                document.getElementById('file-count').textContent = allFiles.length;
+                renderTable();
+            } catch(e) { console.error("Failed to load files", e); }
+        }
+
+        function handleSort(column) {
+            if (sortState.col === column) {
+                sortState.dir = (sortState.dir === 'asc') ? 'desc' : 'asc';
+            } else {
+                sortState.col = column;
+                sortState.dir = 'asc';
+            }
+            renderTable();
+        }
+
+        function renderTable() {
+            const tbody = document.getElementById('file-list');
+            tbody.innerHTML = '';
+
+            allFiles.sort((a, b) => {
+                let valA = a[sortState.col];
+                let valB = b[sortState.col];
+                if (typeof valA === 'string') valA = valA.toLowerCase();
+                if (typeof valB === 'string') valB = valB.toLowerCase();
+                if (valA < valB) return sortState.dir === 'asc' ? -1 : 1;
+                if (valA > valB) return sortState.dir === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            document.getElementById('sort-icon-name').textContent = '';
+            document.getElementById('sort-icon-size').textContent = '';
+            document.getElementById(`sort-icon-${sortState.col}`).textContent = sortState.dir === 'asc' ? '▲' : '▼';
+
+            allFiles.forEach(file => {
+                const tr = document.createElement('tr');
+                let checkbox = `<input type="checkbox" value="${file.name}" class="file-checkbox">`;
+                let status = "<span style='color: #00ff00;'>Ready</span>";
+                
+                if (file.locked) {
+                    checkbox = `<input type="checkbox" disabled style="opacity: 0.5">`;
+                    status = "<span style='color: orange;'>Active Recording...</span>";
+                    tr.className = "locked";
+                }
+
+                tr.innerHTML = `
+                    <td style="text-align: center;">${checkbox}</td>
+                    <td>${file.name}</td>
+                    <td>${(file.size / 1024).toFixed(1)} KB</td>
+                    <td>${status}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // [UPDATED] Process Files Function
+        async function processFiles() {
+            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+            const files = Array.from(checkboxes).map(cb => cb.value);
+            const format = document.getElementById('export-format').value;
+
+            if (files.length === 0) {
+                alert("Please select at least one file!");
+                return;
+            }
+
+            // --- 1. DIRECT DOWNLOAD CHECK ---
+            // If only one file is selected and it is already a CSV or JSON, download directly.
+            if (files.length === 1) {
+                const f = files[0].toLowerCase();
+                if (f.endsWith('.csv') || f.endsWith('.json')) {
+                    const link = document.createElement('a');
+                    link.href = `/api/download?folder=output&name=${encodeURIComponent(files[0])}`;        
+                    link.download = files[0];  
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    return; // Stop here, do not call API merge
+                }
+            }
+
+            // --- 2. MERGE/CONVERT FLOW (For PCAP files) ---
+            const modal = document.getElementById('processing-modal');
+            modal.style.display = "flex";
+
+            try {
+                const res = await fetch('/api/merge', {
+                    method: 'POST',
+                    body: JSON.stringify({ files: files, format: format })
+                });
+
+                if (!res.ok) throw new Error("Server Error");
+
+                const data = await res.json(); 
+                const now = new Date();
+                const timestamp = now.toISOString().replace(/[-:T]/g, '').split('.')[0]; 
+                const uniqueName = `TARGEX_Export_${timestamp}.${format}`;
+
+                const link = document.createElement('a');
+                link.href = data.url;        
+                link.download = uniqueName;  
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+
+            } catch (e) {
+                alert("Error processing files: " + e.message);
+            } finally {
+                modal.style.display = "none";
+            }
+        }
+
+        loadFiles();
+    </script>
+</body>
+</html>

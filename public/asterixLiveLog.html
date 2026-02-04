@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TARGEX Live Packet Stream</title>
+    <style>
+        /* --- GLOBAL LAYOUT --- */
+        body { 
+            margin: 0; padding: 0; background: #111; color: #ccc;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            overflow: hidden; display: flex; height: 100vh; 
+        }
+
+        /* --- SIDEBAR (Restored) --- */
+        #sidebar {
+            width: 250px; min-width: 250px;
+            background: #1e1e1e; border-right: 1px solid #333;
+            display: flex; flex-direction: column;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.5); z-index: 1000;
+        }
+        .sidebar-header {
+            padding: 15px; background: #252526; border-bottom: 2px solid #007acc;
+        }
+        .sidebar-header h2 { margin: 0; color: #00ff00; font-size: 20px; letter-spacing: 1px; }
+        .sidebar-header span { font-size: 10px; color: #888; }
+        
+        .section { padding: 15px; border-bottom: 1px solid #333; }
+        .section-title { font-size: 11px; font-weight: bold; color: #007acc; margin-bottom: 8px; text-transform: uppercase; }
+
+        /* STATUS WIDGETS */
+        .status-row { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 13px; }
+        .status-val { font-family: monospace; color: #fff; }
+        .indicator { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+        .green { background: #00ff00; box-shadow: 0 0 5px #00ff00; }
+        .red { background: #ff0000; box-shadow: 0 0 5px #ff0000; }
+
+        .btn-nav { 
+            width: 100%; padding: 10px; cursor: pointer; border: none; 
+            font-weight: bold; background: #444; color: white; margin-top: 5px;
+            text-align: center; text-decoration: none; display: inline-block; box-sizing: border-box;
+            font-size: 13px;
+        }
+        .btn-nav:hover { background: #555; }
+
+        /* --- MAIN CONTENT AREA --- */
+        #main-content {
+            flex-grow: 1; padding: 20px; display: flex; flex-direction: column; background: #111;
+        }
+
+        h1 { color: #00ff00; margin-top: 0; border-bottom: 1px solid #333; padding-bottom: 10px; font-family: 'Segoe UI', sans-serif; }
+
+        /* Controls Bar */
+        .actions { 
+            display: flex; gap: 10px; margin-bottom: 10px; 
+            align-items: center;
+        }
+        .btn-action {
+            background: #333; color: white; border: 1px solid #555; padding: 6px 15px; cursor: pointer;
+            font-family: monospace; font-size: 12px; font-weight: bold; height: 32px;
+        }
+        .btn-action:hover { background: #444; }
+        .btn-clear { background: #500; border: 1px solid #700; }
+        .btn-clear:hover { background: #700; }
+        
+        select.btn-action { padding-right: 25px; outline: none; }
+
+        .paused { background: #d9534f !important; border-color: #d43f3a !important; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
+
+        /* --- LOG CONTAINER (Matrix Style) --- */
+        #log-container {
+            flex-grow: 1; background: #000; border: 1px solid #333;
+            overflow-y: auto; padding: 10px; 
+            font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.4;
+        }
+
+        /* Log Entries */
+        .packet { border-bottom: 1px solid #222; padding: 4px 0; display: flex; align-items: flex-start; }
+        .ts { color: #b8b7b7; margin-right: 15px; width: 110px; flex-shrink: 0; font-size: 13px; }
+        .source-lbl { font-weight: bold; width: 60px; flex-shrink: 0; margin-right: 10px; }
+        .data { color: #0f0; word-break: break-all; }
+        
+        /* Specific Colors */
+        .cat34 { color: orange; }
+        .cat48 { color: cyan; }
+
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h2>TARGEX</h2>
+            <span>PACKET INSPECTOR</span>
+        </div>
+
+        <div class="section">
+            <div class="section-title">System Status</div>
+            <div class="status-row">
+                <span>Server Link</span>
+                <span class="status-val"><span id="ws-ind" class="indicator red"></span><span id="ws-text">Offline</span></span>
+            </div>
+            <div class="status-row">
+                <span>Packets RX</span>
+                <span class="status-val" id="pkt-count" style="color: #00ff00;">0</span>
+            </div>
+            <div class="status-row">
+                <span>Active Tracks</span>
+                <span class="status-val" id="trk-count" style="color: #fff;">0</span>
+            </div>
+        </div>
+
+        <div class="section">
+            <div style="font-size: 12px; color: #888; margin-bottom: 10px;">
+                Live decoding of Asterix streams.
+            </div>
+            <a href="/" class="btn-nav">BACK TO MAP</a>
+            <a href="/pcapFilesAndMerge" class="btn-nav">FILE MANAGER</a>
+        </div>
+    </div>
+
+    <div id="main-content">
+        <h1>LIVE ASTERIX STREAM</h1>
+
+        <div class="actions">
+            <select id="cat-filter" class="btn-action">
+                <option value="ALL">FILTER: ALL</option>
+                <option value="34">FILTER: CAT 34</option>
+                <option value="48">FILTER: CAT 48</option>
+            </select>
+
+            <button class="btn-action" id="btn-pause" onclick="togglePause()">PAUSE STREAM</button>
+            <button class="btn-action btn-clear" onclick="clearLog()">CLEAR</button>
+            <div style="flex-grow: 1;"></div>
+            <label style="font-size: 12px; color: #888; cursor: pointer; font-family: 'Segoe UI', sans-serif;">
+                <input type="checkbox" id="chk-autoscroll" checked> Auto-Scroll
+            </label>
+        </div>
+
+        <div id="log-container">
+            <div style="color: #444; font-style: italic; padding: 10px;">Stream ready. Waiting for data...</div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. ASTERIX FIELD MAPPING ---
+        const ASTERIX_MAP = {
+        "CAT_34": [
+            // Standard Keys from your log
+            { key: "asterix_asterix_category", label: "CAT" },
+            { key: "asterix_asterix_SAC", label: "SAC" },
+            { key: "asterix_asterix_SIC", label: "SIC" },
+            { key: "asterix_asterix_TOD", label: "Time" },
+            
+            
+            // 034 Specifics (Underscores instead of dots)
+            { key: "asterix_asterix_034_000_MT", label: "MsgType" },
+            { key: "asterix_asterix_034_050_02_ANT", label: "Antenna" },
+            { key: "asterix_asterix_034_050_02_CHAB", label: "ChAB" },
+            { key: "asterix_asterix_034_050_02_OVL", label: "OVL" },
+            { key: "asterix_asterix_034_050_02_MSC", label: "MSC" },
+            { key: "asterix_asterix_034_060_02_POL", label: "POL" },
+            { key: "asterix_asterix_034_060_02_RED_RAD", label: "RedRad" },
+            { key: "asterix_asterix_034_060_02_STC", label: "STC" },
+            { key: "asterix_asterix_034_120_H", label: "Height" },
+            { key: "asterix_asterix_034_120_LAT", label: "Lat" },
+            { key: "asterix_asterix_034_120_LON", label: "Lon" }
+        ],
+        "CAT_48": [
+            // Assuming similar pattern for Cat 48 (Tshark usually follows suit)
+            { key: "asterix_asterix_category", label: "CAT" },
+            { key: "asterix_asterix_048_161_TN", label: "Track#" },
+            { key: "asterix_asterix_SAC", label: "SAC" },
+            { key: "asterix_asterix_SIC", label: "SIC" },
+            { key: "asterix_asterix_TOD", label: "Time" },
+            
+            { key: "asterix_asterix_048_020_TYP", label: "Type" },
+            { key: "asterix_asterix_048_020_SIM", label: "SIM" },
+            { key: "asterix_asterix_048_020_RDP", label: "RDP" },
+            { key: "asterix_asterix_048_020_SPI", label: "SPI" },
+            { key: "asterix_asterix_048_040_RHO", label: "Rho" },
+            { key: "asterix_asterix_048_040_THETA", label: "Theta" },
+            
+            { key: "asterix_asterix_048_042_X", label: "X" },
+            { key: "asterix_asterix_048_042_Y", label: "Y" },
+            { key: "asterix_asterix_048_200_GSP", label: "GroundSpeed" },
+            { key: "asterix_asterix_048_200_HDG", label: "Heading" },
+            { key: "asterix_asterix_048_170_CNF", label: "Confirmed" },
+            { key: "asterix_asterix_048_170_RAD", label: "Radar" },
+            { key: "asterix_asterix_048_170_DOU", label: "DOU" },
+            { key: "asterix_asterix_048_170_MAH", label: "MAH" },
+            { key: "asterix_asterix_048_170_CDM", label: "CDM" },
+            { key: "asterix_asterix_048_210_SIGX", label: "Sig X" },
+            { key: "asterix_asterix_048_210_SIGY", label: "Sig Y" },
+            { key: "asterix_asterix_048_210_SIGV", label: "Sig V" },
+            { key: "asterix_asterix_048_210_SIGH", label: "Sig H" }
+        ]
+    };
+
+        // --- 2. LOGIC ---
+        const container = document.getElementById('log-container');
+        const btnPause = document.getElementById('btn-pause');
+        const chkScroll = document.getElementById('chk-autoscroll');
+        const catFilter = document.getElementById('cat-filter');
+        
+        const ui = {
+            wsInd: document.getElementById('ws-ind'),
+            wsText: document.getElementById('ws-text'),
+            pktCount: document.getElementById('pkt-count'),
+            trkCount: document.getElementById('trk-count')
+        };
+        
+        let isPaused = false;
+        let pktCounter = 0;
+        let activeTracks = new Set();
+        const MAX_LINES = 200; 
+
+        function togglePause() {
+            isPaused = !isPaused;
+            if (isPaused) {
+                btnPause.innerText = "RESUME STREAM";
+                btnPause.classList.add("paused");
+            } else {
+                btnPause.innerText = "PAUSE STREAM";
+                btnPause.classList.remove("paused");
+            }
+        }
+
+        function clearLog() {
+            container.innerHTML = '';
+            activeTracks.clear();
+            ui.trkCount.innerText = "0";
+        }
+
+        // --- 3. POLLING LOOP ---
+        async function fetchData() {
+            if (isPaused) return;
+
+            try {
+                const res = await fetch('/api/data');
+                if (res.ok) {
+                    ui.wsInd.className = "indicator green";
+                    ui.wsText.innerText = "Online";
+
+                    const packets = await res.json();
+                    if (Array.isArray(packets) && packets.length > 0) {
+                        
+                        pktCounter += packets.length;
+                        ui.pktCount.innerText = pktCounter.toLocaleString();
+
+                        if(container.firstElementChild && container.firstElementChild.innerText.includes("Waiting")) {
+                            container.innerHTML = '';
+                        }
+                        
+                        packets.forEach(pkt => processPacket(pkt));
+                        ui.trkCount.innerText = activeTracks.size;
+                    }
+                } else {
+                    throw new Error("Server Error");
+                }
+            } catch (e) {
+                ui.wsInd.className = "indicator red";
+                ui.wsText.innerText = "Offline";
+            }
+        }
+
+        function processPacket(pkt) {
+            if (!pkt.layers || !pkt.layers.asterix) return;
+            const ast = pkt.layers.asterix;
+            const keys = Object.keys(ast);
+
+            // 1. Detect Category
+            let cat = "UNK";
+            if (keys.some(k => k.includes("_048_"))) cat = 48;
+            else if (keys.some(k => k.includes("_034_"))) cat = 34;
+            else {
+                const k = keys.find(x => x.includes("asterix_category"));
+                if(k) cat = parseInt(ast[k]);
+            }
+
+            // 2. Filter
+            const filter = catFilter.value;
+            if(filter !== "ALL" && cat != filter) return;
+
+            // 3. Track Counting
+            const tidKey = keys.find(k => k.includes("_TN") || k.includes("_SAC"));
+            if (tidKey) {
+                const idVal = Array.isArray(ast[tidKey]) ? ast[tidKey][0] : ast[tidKey];
+                if(idVal !== "0" && idVal !== 0) activeTracks.add(idVal);
+            }
+
+            // 4. Decode Fields
+            let summary = "";
+            let styleClass = "";
+            let srcLabel = "ASTERIX";
+
+            const decode = (map) => {
+                let str = "";
+                map.forEach(field => {
+                    if(ast[field.key] !== undefined) {
+                         str += `${field.label}:${ast[field.key]} | `;
+                    } else {
+                        // Fallback partial match
+                        const partialKey = keys.find(k => k.endsWith(field.key.split('_').pop()));
+                        if(partialKey && ast[partialKey] !== undefined) {
+                            str += `${field.label}:${ast[partialKey]} | `;
+                        }
+                    }
+                });
+                return str;
+            };
+
+            if (cat === 34) {
+                srcLabel = "CAT 34";
+                styleClass = "cat34";
+                summary = decode(ASTERIX_MAP.CAT_34);
+            } else if (cat === 48) {
+                srcLabel = "CAT 48";
+                styleClass = "cat48";
+                summary = decode(ASTERIX_MAP.CAT_48);
+            } else {
+                srcLabel = `CAT ${cat}`;
+                summary = JSON.stringify(ast); 
+            }
+
+            addLog(srcLabel, summary, styleClass);
+        }
+
+        function addLog(source, text, cssClass) {
+            const now = new Date();
+            // Military Time
+            const timeStr = now.toLocaleTimeString('en-GB', { hour12: false }) + "." + String(now.getMilliseconds()).padStart(3, '0');
+
+            const div = document.createElement('div');
+            div.className = 'packet';
+            div.innerHTML = `
+                <span class="ts">[${timeStr}] <br/> <span class="source-lbl ${cssClass}">${source}</span></span>
+                <span class="data ${cssClass}">${text}</span>
+            `;
+
+            container.appendChild(div);
+
+            while(container.children.length > MAX_LINES) {
+                container.removeChild(container.firstChild);
+            }
+
+            if(chkScroll.checked) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        setInterval(fetchData, 200);
+
+    </script>
+</body>
+</html>
