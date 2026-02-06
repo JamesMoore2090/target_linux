@@ -18,7 +18,7 @@
     "max_file_size_mb": 10
   },
   "network_input": {
-    "interface": "ens34",
+    "interface": "\\Device\\NPF_{BC6E576D-ED0E-4464-A9E2-5181B6F242E8}",
     "port": 8600,
     "protocol": "udp",
     "multicast_group": "227.0.0.2",
@@ -30,7 +30,7 @@
   },
   "output": {
     "enabled": true,
-    "destination": "output/"
+    "destination": "C:/ProgramData/Targex/output"
   },
   "TAKOutput": {
     "cot_ip": "10.90.90.208",

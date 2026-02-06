@@ -2,31 +2,26 @@
 #include "Logger.hpp"
 #include <fstream>
 #include <sstream>
-#include <dirent.h> 
-#include <sys/stat.h> 
 #include <cstdio> 
 #include <vector>
 #include <algorithm>
+#include <filesystem>
+#include <ctime>     
 
+namespace fs = std::filesystem;
+
+// Helper to read file content
 std::string readFile(const std::string& path) {
-    std::ifstream f(path);
-    if (!f) return "<h1>404 Not Found: " + path + "</h1>";
-    std::stringstream buf; buf << f.rdbuf();
-    return buf.str();
+    std::ifstream fStream(path);
+    if (!fStream.is_open()) return "";
+    std::stringstream buffer;
+    buffer << fStream.rdbuf();
+    return buffer.str();
 }
 
 WebServer::WebServer(AppConfig& config, MarsEngine& engine) 
     : m_config(config), m_engine(engine) 
 {
-    // Ensure output directory exists
-    struct stat st = {0};
-    if (stat("./output", &st) == -1) {
-        #ifdef _WIN32
-            _mkdir("./output");
-        #else
-            mkdir("./output", 0777);
-        #endif
-    }
     setupRoutes();
 }
 
@@ -35,83 +30,108 @@ WebServer::~WebServer() {
 }
 
 void WebServer::start() {
+    if (m_isRunning) return;
+    m_isRunning = true;
+
     m_serverThread = std::thread([this]() {
-        Logger::info("Web Server starting on port {}", m_config.rx_port_web);
-        m_server.listen("0.0.0.0", m_config.rx_port_web);
+        Logger::info("[WEB] Starting server on port {}", m_config.rx_port_web);
+        
+        // [IMPORTANT] Set the folder where your .html files live
+        // This makes http://localhost:8080/AsterixLiveLog.html work automatically
+        if (!m_svr.set_mount_point("/", "./public")) {
+            Logger::warn("[WEB] Could not mount ./public directory. Web pages may be missing.");
+        }
+
+        if (!m_svr.listen("0.0.0.0", m_config.rx_port_web)) {
+            Logger::error("[WEB] Failed to bind port {}.", m_config.rx_port_web);
+            m_isRunning = false;
+        }
     });
 }
 
 void WebServer::stop() {
-    m_server.stop();
+    if (!m_isRunning) return;
+    m_isRunning = false;
+    m_svr.stop();
     if (m_serverThread.joinable()) m_serverThread.join();
 }
 
 void WebServer::setupRoutes() {
-    // 1. STATIC
-    m_server.set_mount_point("/", "./public");
-
-    // 2. LOGS
-    m_server.Get("/api/logs", [&](const httplib::Request& req, httplib::Response& res) {
-        std::ifstream f("targex.log");
-        std::stringstream buffer;
-        buffer << f.rdbuf();
-        res.set_content(buffer.str(), "text/plain");
-    });
-    m_server.Get("/asterixLiveLog", [&](const httplib::Request&, httplib::Response& res) {
-        res.set_content(readFile("./public/asterixLiveLog.html"), "text/html");
-    });
-
-    // Maps the browser URL "/files" to the file "pcapFilesAndMerge.html"
-    m_server.Get("/pcapFilesAndMerge", [&](const httplib::Request&, httplib::Response& res) {
-        res.set_content(readFile("./public/pcapFilesAndMerge.html"), "text/html");
-    });
-
-    //--- API: LIVE LOGS ---
-    m_server.Get("/api/logs", [&](const httplib::Request&, httplib::Response& res) {
-        std::ifstream f(m_config.active_log_path);
-        if(f) {
-            std::stringstream buffer;
-            buffer << f.rdbuf();
-            res.set_content(buffer.str(), "text/plain");
+    // 1. Root Route - Explicitly serve index.html when user visits "/"
+    m_svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
+        std::string content = readFile("./public/index.html");
+        if (content.empty()) {
+            res.set_content("<h1>Error: public/index.html not found</h1>", "text/html");
+            res.status = 404;
         } else {
-            res.set_content("Log file not found: " + m_config.active_log_path, "text/plain");
+            res.set_content(content, "text/html");
         }
     });
 
-    // --- API: LIST FILES ---
-    m_server.Get("/api/files", [&](const httplib::Request&, httplib::Response& res) {
+    // 2. Navigation Routes (Optional: specific pretty URLs)
+    m_svr.Get("/asterixLiveLog", [](const httplib::Request&, httplib::Response& res) {
+        res.set_redirect("/AsterixLiveLog.html");
+    });
+    
+    m_svr.Get("/pcapFilesAndMerge", [](const httplib::Request&, httplib::Response& res) {
+        res.set_redirect("/pcapFilesAndMerge.html");
+    });
+
+    // 3. API Route (Data for the pages)
+    m_svr.Get("/api/data", [&](const httplib::Request& req, httplib::Response& res) {
+        auto batch = m_engine.pollData();
+        nlohmann::json jBatch = batch; 
+        res.set_content(jBatch.dump(), "application/json");
+    });
+
+    // [FUTURE] You will likely need an API for the "Merge" page
+    // m_svr.Post("/api/merge", ...);
+    m_svr.Get("/api/config", [&](const httplib::Request& req, httplib::Response& res) {
+        nlohmann::json j = m_config; // Uses the INTRUSIVE macro from AppConfig.hpp
+        res.set_content(j.dump(), "application/json");
+    });
+
+    m_svr.Get("/api/files", [&](const httplib::Request&, httplib::Response& res) {
         nlohmann::json root;
         nlohmann::json filesArr = nlohmann::json::array();
         
-        std::string dirPath = "./output";
-        DIR *dir; struct dirent *ent;
+        std::string dirPath = "output";
         
-        if ((dir = opendir (dirPath.c_str())) != NULL) {
-            while ((ent = readdir (dir)) != NULL) {
-                std::string name = ent->d_name;
-                if(name == "." || name == "..") continue;
-                
-                // Construct relative path "output/filename.pcap" to match config
-                std::string relativePath = "output/" + name; 
-                std::string fullSystemPath = dirPath + "/" + name;
+        // Ensure directory exists
+        if (fs::exists(dirPath) && fs::is_directory(dirPath)) {
+            try {
+                // Iterate using C++17 filesystem (Cross-platform)
+                for (const auto& entry : fs::directory_iterator(dirPath)) {
+                    if (entry.is_regular_file()) {
+                        std::string name = entry.path().filename().string();
+                        
+                        // Skip hidden files if any
+                        if(name.empty() || name[0] == '.') continue;
 
-                struct stat st;
-                stat(fullSystemPath.c_str(), &st);
-                
-                nlohmann::json item;
-                item["name"] = name;
-                item["size"] = st.st_size;
+                        nlohmann::json item;
+                        item["name"] = name;
+                        item["size"] = entry.file_size();
 
-                // [CRITICAL] Check if this is the active file
-                if (!m_config.active_pcap_path.empty() && m_config.active_pcap_path == relativePath) {
-                    item["locked"] = true;
-                } else {
-                    item["locked"] = false;
+                        // Construct relative path for comparison
+                        std::string relativePath = "output/" + name; 
+
+                        // Check if locked (Active File)
+                        // Note: We normalize paths to generic_string to handle Windows backslashes
+                        std::string configPath = fs::path(m_config.active_pcap_path).generic_string();
+                        std::string currentPath = fs::path(relativePath).generic_string();
+
+                        if (!m_config.active_pcap_path.empty() && configPath == currentPath) {
+                            item["locked"] = true;
+                        } else {
+                            item["locked"] = false;
+                        }
+                        
+                        filesArr.push_back(item);
+                    }
                 }
-                
-                filesArr.push_back(item);
+            } catch (const std::exception& e) {
+                Logger::error("[WEB] File listing error: {}", e.what());
             }
-            closedir (dir);
         }
         
         root["files"] = filesArr; 
@@ -119,7 +139,7 @@ void WebServer::setupRoutes() {
     });
 
     // --- API: MERGE & CONVERT FILES ---
-    m_server.Post("/api/merge", [&](const httplib::Request& req, httplib::Response& res) {
+    m_svr.Post("/api/merge", [&](const httplib::Request& req, httplib::Response& res) {
         try {
             auto json = nlohmann::json::parse(req.body);
             std::vector<std::string> files = json["files"];
@@ -270,7 +290,7 @@ void WebServer::setupRoutes() {
     });
 
     // --- API: DOWNLOAD FILE ---
-    m_server.Get("/api/download", [&](const httplib::Request& req, httplib::Response& res) {
+    m_svr.Get("/api/download", [&](const httplib::Request& req, httplib::Response& res) {
         if (!req.has_param("name")) { res.status=400; return; }
         std::string name = req.get_param_value("name");
         
@@ -299,7 +319,7 @@ void WebServer::setupRoutes() {
     });
 
     // --- API: DELETE FILE ---
-    m_server.Post("/api/delete", [&](const httplib::Request& req, httplib::Response& res) {
+    m_svr.Post("/api/delete", [&](const httplib::Request& req, httplib::Response& res) {
         if (!req.has_param("name")) { res.status=400; return; }
         std::string name = req.get_param_value("name");
         
@@ -314,16 +334,8 @@ void WebServer::setupRoutes() {
         } else res.status=500;
     });
 
-    // 3. CONFIG
-    m_server.Get("/api/config", [&](const httplib::Request& req, httplib::Response& res) {
-        nlohmann::json j = m_config; // Uses the INTRUSIVE macro from AppConfig.hpp
-        res.set_content(j.dump(), "application/json");
-    });
-
-    
-
     // POST - Frontend updates settings
-    m_server.Post("/api/config", [&](const httplib::Request& req, httplib::Response& res) {
+    m_svr.Post("/api/config", [&](const httplib::Request& req, httplib::Response& res) {
         try {
             auto x = nlohmann::json::parse(req.body);
             
@@ -376,9 +388,9 @@ void WebServer::setupRoutes() {
             root["TAKOutput"]["ssl_trust_store"] = m_config.ssl_trust_store;
 
             // Save to Disk
-            std::ofstream o("config.json");
-            o << root.dump(4);
-            o.close();
+            std::ofstream oStream("resources/config.json");
+            oStream << root.dump(4);
+            oStream.close();
 
             Logger::info("Config Saved to Nested config.json");
             res.status = 200;
@@ -386,14 +398,13 @@ void WebServer::setupRoutes() {
     });
 
     // 4. DATA
-    m_server.Get("/api/data", [&](const httplib::Request& req, httplib::Response& res) {
+    m_svr.Get("/api/data", [&](const httplib::Request& req, httplib::Response& res) {
         auto batch = m_engine.pollData();
         nlohmann::json jBatch = batch; 
         res.set_content(jBatch.dump(), "application/json");
     });
 
-    // 5. STATUS
-    m_server.Get("/api/status", [&](const httplib::Request& req, httplib::Response& res) {
+     m_svr.Get("/api/status", [&](const httplib::Request& req, httplib::Response& res) {
         nlohmann::json status;
         status["tcp_connected"] = m_engine.isTcpConnected();
         status["protocol"] = m_config.cot_protocol; 
@@ -401,30 +412,25 @@ void WebServer::setupRoutes() {
     });
 
     // 6. UPLOAD (RAW BINARY MODE) - [FIXED]
-    m_server.Post("/api/upload", [&](const httplib::Request& req, httplib::Response& res) {
-        // Filename passed via URL: /api/upload?name=client.p12
+    m_svr.Post("/api/upload", [&](const httplib::Request& req, httplib::Response& res) {
         std::string filename = "";
-        
-        // Manual param parsing to be safe across versions
-        if (req.has_param("name")) {
-             filename = req.get_param_value("name");
-        }
+        if (req.has_param("name")) filename = req.get_param_value("name");
         
         if (filename.empty()) {
             res.status = 400;
-            res.set_content("Missing 'name' query parameter", "text/plain");
             return;
         }
 
-        std::string filepath = "./" + filename;
+        // Use filesystem to construct path safely
+        fs::path filepath = fs::path(filename).filename(); // Extract just filename (security)
+        
         std::ofstream ofs(filepath, std::ios::binary);
         if (ofs) {
-            ofs << req.body; // Save the raw binary body directly
+            ofs << req.body; 
             ofs.close();
-            Logger::info("File Uploaded: {}", filename);
+            Logger::info("File Uploaded: {}", filepath.string());
             res.status = 200;
         } else {
-            Logger::error("Failed to save file: {}", filename);
             res.status = 500;
         }
     });

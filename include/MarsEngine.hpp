@@ -8,7 +8,7 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 
 // OpenSSL Forward Declarations (Avoids pulling heavy headers here)
 typedef struct ssl_st SSL;

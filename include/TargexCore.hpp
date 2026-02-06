@@ -3,39 +3,28 @@
 
 #include "ConfigLoader.hpp"
 #include <string>
-#include <vector>
-#include <mutex>
 #include <atomic>
-#include <thread>
-#include <deque> // For the queue
-#include <nlohmann/json.hpp>
+#include <mutex>
+#include "json.hpp"
+#include <filesystem>
 
 class TargexCore {
 public:
     TargexCore(AppConfig& config);
     ~TargexCore();
 
-    bool initialize();
-    void startCapture();
-    void stopCapture();
+    bool initialize();   // [UPDATED] Now handles Winsock init
+    void startCapture(); // [UPDATED] Cross-platform command execution
+    void stopCapture();  // [UPDATED] Cross-platform process termination
 
-    // Now simply pops from the queue
     nlohmann::json pollData();
 
 private:
     AppConfig& m_config;
-    FILE* m_tsharkPipe = nullptr;
-    std::mutex m_pipeMutex;
     std::atomic<bool> m_isCapturing{false};
-    std::string m_currentFile;
-
-    // --- NEW: Threaded Buffer ---
-    std::thread m_captureThread;
-    std::deque<nlohmann::json> m_packetQueue;
-    std::mutex m_queueMutex;
     
-    // The loop function for the background thread
-    void captureLoop(); 
+    // Helper to stop dumpcap specifically on Windows vs Linux
+    void terminateCaptureProcess();
 };
 
 #endif

@@ -2,7 +2,7 @@
 #include <fstream>
 #include <string>
 #include <map>
-#include <nlohmann/json.hpp>
+#include "json.hpp"
 
 using json = nlohmann::json;
 
